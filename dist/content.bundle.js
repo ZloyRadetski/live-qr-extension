@@ -10498,6 +10498,10 @@
     } else if (el.tagName === "CANVAS") {
       width = el.width;
       height = el.height;
+    } else if (el.tagName === "VIDEO") {
+      if (el.readyState < 2 || !el.videoWidth || !el.videoHeight) return [];
+      width = el.videoWidth;
+      height = el.videoHeight;
     } else {
       return [];
     }
@@ -10578,7 +10582,7 @@
   }
   function scanVisibleDomImages() {
     if (typeof document === "undefined") return [];
-    const elements = Array.from(document.querySelectorAll("img, canvas"));
+    const elements = Array.from(document.querySelectorAll("img, canvas, video"));
     const allResults = [];
     for (const el of elements) {
       if (isElementInViewport(el)) {

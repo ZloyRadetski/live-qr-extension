@@ -108,6 +108,10 @@ export function scanMediaElement(el, maxDimension = 1200) {
   } else if (el.tagName === 'CANVAS') {
     width = el.width;
     height = el.height;
+  } else if (el.tagName === 'VIDEO') {
+    if (el.readyState < 2 || !el.videoWidth || !el.videoHeight) return [];
+    width = el.videoWidth;
+    height = el.videoHeight;
   } else {
     return [];
   }
@@ -205,13 +209,13 @@ export function scanMediaElement(el, maxDimension = 1200) {
 }
 
 /**
- * Scans all visible <img> and <canvas> tags on the page.
+ * Scans all visible <img>, <canvas>, and <video> tags on the page.
  * @returns {Array<{ data: string, location: any, rect: DOMRect, element: HTMLElement, isDom: boolean }>}
  */
 export function scanVisibleDomImages() {
   if (typeof document === 'undefined') return [];
 
-  const elements = Array.from(document.querySelectorAll('img, canvas'));
+  const elements = Array.from(document.querySelectorAll('img, canvas, video'));
   const allResults = [];
 
   for (const el of elements) {

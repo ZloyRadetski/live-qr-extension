@@ -338,11 +338,126 @@ async function setupBlinkingTest() {
   restartAutoBlink();
 }
 
+// Real-Time HTML5 Video Stream Test (Card 9)
+async function setupVideoStreamTest() {
+  const video = document.getElementById('test-video-player');
+  const toggleQrBtn = document.getElementById('toggle-video-qr-btn');
+  const playBtn = document.getElementById('toggle-video-play-btn');
+  const statusBadge = document.getElementById('video-status-badge');
+
+  if (!video) return;
+
+  // Generate an offscreen QR canvas
+  const qrCanvas = document.createElement('canvas');
+  qrCanvas.width = 160;
+  qrCanvas.height = 160;
+  await QRCode.toCanvas(qrCanvas, 'https://antigravity.ai/live-video-stream-qr', {
+    width: 160,
+    margin: 2,
+    color: { dark: '#031326', light: '#ffffff' }
+  });
+
+  // Offscreen stream canvas that generates live video frames
+  const streamCanvas = document.createElement('canvas');
+  streamCanvas.width = 320;
+  streamCanvas.height = 220;
+  const ctx = streamCanvas.getContext('2d');
+
+  let showQr = true;
+  let isPlaying = true;
+  let frameCount = 0;
+
+  function renderVideoFrame() {
+    frameCount++;
+    // Draw animated video backdrop (cool cyber grid)
+    ctx.fillStyle = '#060913';
+    ctx.fillRect(0, 0, streamCanvas.width, streamCanvas.height);
+
+    // Dynamic grid lines
+    ctx.strokeStyle = 'rgba(0, 240, 255, 0.15)';
+    ctx.lineWidth = 1;
+    const offset = (frameCount * 0.8) % 20;
+    for (let x = offset; x < streamCanvas.width; x += 20) {
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, streamCanvas.height); ctx.stroke();
+    }
+    for (let y = offset; y < streamCanvas.height; y += 20) {
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(streamCanvas.width, y); ctx.stroke();
+    }
+
+    // Video header text
+    ctx.fillStyle = '#38bdf8';
+    ctx.font = '11px sans-serif';
+    ctx.fillText(`REC ● LIVE STREAM [FRAME ${frameCount}]`, 12, 22);
+
+    // Draw QR code if active
+    if (showQr) {
+      // Centered QR in video frame
+      ctx.drawImage(qrCanvas, 80, 40, 160, 160);
+    } else {
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
+      ctx.fillRect(80, 40, 160, 160);
+      ctx.fillStyle = '#8b949e';
+      ctx.font = '13px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('[QR HIDDEN IN STREAM]', 160, 125);
+      ctx.textAlign = 'start';
+    }
+
+    if (isPlaying) {
+      requestAnimationFrame(renderVideoFrame);
+    }
+  }
+
+  // Connect canvas stream to video element
+  try {
+    if (streamCanvas.captureStream) {
+      const stream = streamCanvas.captureStream(30);
+      video.srcObject = stream;
+      video.play().catch(() => {});
+    }
+  } catch (err) {
+    console.warn('[TestBench] Video captureStream error:', err);
+  }
+
+  renderVideoFrame();
+
+  if (toggleQrBtn) {
+    toggleQrBtn.addEventListener('click', () => {
+      showQr = !showQr;
+      toggleQrBtn.textContent = showQr ? 'Toggle QR in Video (Скрыть)' : 'Toggle QR in Video (Показать)';
+    });
+  }
+
+  if (playBtn) {
+    playBtn.addEventListener('click', () => {
+      isPlaying = !isPlaying;
+      playBtn.textContent = isPlaying ? 'Pause Stream' : 'Resume Stream';
+      if (statusBadge) {
+        if (isPlaying) {
+          statusBadge.style.background = 'rgba(56, 189, 248, 0.15)';
+          statusBadge.style.color = '#38bdf8';
+          statusBadge.style.borderColor = 'rgba(56, 189, 248, 0.3)';
+          statusBadge.innerHTML = `<span style="width: 7px; height: 7px; border-radius: 50%; background: #38bdf8; box-shadow: 0 0 8px #38bdf8;"></span> VIDEO: STREAMING`;
+          renderVideoFrame();
+          video.play().catch(() => {});
+        } else {
+          statusBadge.style.background = 'rgba(234, 179, 8, 0.15)';
+          statusBadge.style.color = '#eab308';
+          statusBadge.style.borderColor = 'rgba(234, 179, 8, 0.3)';
+          statusBadge.innerHTML = `<span style="width: 7px; height: 7px; border-radius: 50%; background: #eab308;"></span> VIDEO: PAUSED`;
+          video.pause();
+        }
+      }
+    });
+  }
+}
+
 function initTestBench() {
   renderSampleQRs();
   setupCustomGenerator();
   setupAnimatedCanvas();
   setupBlinkingTest();
+  setupVideoStreamTest();
   setupInPageSimulation();
 }
 

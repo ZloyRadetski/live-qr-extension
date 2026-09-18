@@ -371,6 +371,36 @@
         </div>
       </div>
     </div>
+
+    <!-- Real-Time HTML5 Video Stream Test -->
+    <div class="card" style="width: 100%; align-items: stretch;">
+      <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 8px; flex-wrap: wrap; gap: 8px;">
+        <h2 style="border: none; padding: 0; margin: 0;">9. Live HTML5 &lt;video&gt; Stream Test (Тест прямого видеопотока)</h2>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span id="video-status-badge" style="display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 700; background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3);">
+            <span style="width: 7px; height: 7px; border-radius: 50%; background: #38bdf8; box-shadow: 0 0 8px #38bdf8;"></span>
+            VIDEO: STREAMING
+          </span>
+        </div>
+      </div>
+
+      <p style="color: var(--text-dim); font-size: 13px;">
+        Проверка прямого считывания QR-кодов из тега <code>&lt;video&gt;</code> через аппаратный видеопоток (2–5 мс вместо медленного скриншота). QR-код генерируется внутри живого медиа-потока.
+      </p>
+
+      <div style="display: flex; gap: 12px; flex-wrap: wrap; align-items: center; background: rgba(13, 17, 23, 0.6); padding: 12px; border-radius: 10px; border: 1px solid var(--border);">
+        <button id="toggle-video-qr-btn" class="action-btn">Toggle QR in Video (Скрыть / Показать)</button>
+        <button id="toggle-video-play-btn" class="secondary-btn">Pause Stream</button>
+        <span id="video-qr-stats" style="color: var(--text-dim); font-size: 12px; margin-left: auto;">Stream: 30 FPS • DOM Video Scan</span>
+      </div>
+
+      <div style="display: flex; justify-content: center; width: 100%; padding-top: 12px;">
+        <div style="display: flex; flex-direction: column; align-items: center; gap: 8px;">
+          <video id="test-video-player" playsinline autoplay muted loop style="width: 320px; height: 220px; border-radius: 12px; border: 1px solid var(--border); background: #0d1117; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);"></video>
+          <span style="font-size: 11px; color: var(--text-dim);">https://antigravity.ai/live-video-stream-qr</span>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script src="test-bench.bundle.js"></script>

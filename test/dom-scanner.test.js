@@ -74,6 +74,14 @@ test('scanMediaElement safely rejects invalid, incomplete, or tiny images', () =
 
   // Non-media tag
   assert.deepEqual(scanMediaElement({ tagName: 'DIV' }), []);
+
+  // Video tag: not ready (readyState 0 or 1)
+  assert.deepEqual(scanMediaElement({ tagName: 'VIDEO', readyState: 0, videoWidth: 640, videoHeight: 480 }), []);
+  assert.deepEqual(scanMediaElement({ tagName: 'VIDEO', readyState: 1, videoWidth: 640, videoHeight: 480 }), []);
+
+  // Video tag: ready but 0 dimensions or tiny
+  assert.deepEqual(scanMediaElement({ tagName: 'VIDEO', readyState: 2, videoWidth: 0, videoHeight: 0 }), []);
+  assert.deepEqual(scanMediaElement({ tagName: 'VIDEO', readyState: 4, videoWidth: 10, videoHeight: 10 }), []);
 });
 
 test('scanVisibleDomImages safely returns empty array in non-browser environment', () => {
