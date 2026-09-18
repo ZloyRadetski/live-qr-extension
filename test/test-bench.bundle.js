@@ -2347,6 +2347,77 @@ var init_storage = __esm({
   }
 });
 
+// src/utils/dom-anchor.js
+function findAnchorElement(centerX, centerY, ignoreRootId = "qr-radar-root") {
+  if (typeof document === "undefined" || !document.elementsFromPoint) {
+    return null;
+  }
+  const elements = document.elementsFromPoint(centerX, centerY) || [];
+  const candidates = elements.filter((el) => {
+    return el && el.id !== ignoreRootId && !el.closest(`#${ignoreRootId}`);
+  });
+  if (candidates.length === 0) return null;
+  const mediaTags = ["IMG", "VIDEO", "CANVAS", "SVG", "PICTURE"];
+  for (const el of candidates) {
+    if (mediaTags.includes(el.tagName)) {
+      return el;
+    }
+  }
+  for (const el of candidates) {
+    try {
+      const bg = window.getComputedStyle(el).backgroundImage;
+      if (bg && bg !== "none" && !bg.includes("initial")) {
+        return el;
+      }
+    } catch {
+    }
+  }
+  const nonBody = candidates.filter((el) => el.tagName !== "BODY" && el.tagName !== "HTML");
+  if (nonBody.length > 0) {
+    nonBody.sort((a, b) => {
+      const ra = a.getBoundingClientRect();
+      const rb = b.getBoundingClientRect();
+      return ra.width * ra.height - rb.width * rb.height;
+    });
+    return nonBody[0];
+  }
+  return candidates[0] || null;
+}
+function computeAnchorOffset(anchorEl, bounds) {
+  if (!anchorEl || !bounds) {
+    return { offsetX: 0, offsetY: 0, width: bounds?.width || 0, height: bounds?.height || 0 };
+  }
+  const rect = anchorEl.getBoundingClientRect();
+  return {
+    offsetX: bounds.minX - rect.left,
+    offsetY: bounds.minY - rect.top,
+    width: bounds.width,
+    height: bounds.height
+  };
+}
+function resolveAnchorPosition(anchorEl, offset, viewport) {
+  if (!anchorEl || typeof anchorEl.isConnected === "boolean" && !anchorEl.isConnected) {
+    return null;
+  }
+  const vw = viewport?.innerWidth ?? (typeof window !== "undefined" ? window.innerWidth : 1920);
+  const vh = viewport?.innerHeight ?? (typeof window !== "undefined" ? window.innerHeight : 1080);
+  const rect = anchorEl.getBoundingClientRect();
+  const x = rect.left + offset.offsetX;
+  const y = rect.top + offset.offsetY;
+  const isVisible = y + offset.height >= -10 && y <= vh + 10 && x + offset.width >= -10 && x <= vw + 10;
+  return {
+    x,
+    y,
+    width: offset.width,
+    height: offset.height,
+    isVisible
+  };
+}
+var init_dom_anchor = __esm({
+  "src/utils/dom-anchor.js"() {
+  }
+});
+
 // src/content/overlay.js
 var overlay_exports = {};
 __export(overlay_exports, {
@@ -2362,6 +2433,7 @@ var init_overlay = __esm({
     init_parser();
     init_coordinates();
     init_storage();
+    init_dom_anchor();
     QROverlayManager = class {
       constructor(options = {}) {
         this.options = {
@@ -2378,6 +2450,10 @@ var init_overlay = __esm({
         this.currentLocation = null;
         this.lastDetectedText = null;
         this.docBounds = null;
+        this.anchorElement = null;
+        this.anchorOffset = null;
+        this.isScrolling = false;
+        this.scrollTimer = null;
         this.missingFrames = 0;
         this.maxMissingFrames = 8;
         this.audioCtx = null;
@@ -2423,11 +2499,23 @@ var init_overlay = __esm({
           if (this.missingFrames > this.maxMissingFrames) {
             this.boxElement.classList.add("qr-hidden");
             this.currentLocation = null;
+            this.anchorElement = null;
+            this.anchorOffset = null;
+            this.docBounds = null;
           }
           return;
         }
         this.missingFrames = 0;
         this.boxElement.classList.remove("qr-hidden");
+        if (this.isScrolling) {
+          const text2 = qrResult.data;
+          if (text2 !== this.lastDetectedText) {
+            this.lastDetectedText = text2;
+            this.renderCardContent(text2);
+            this.onNewQRAcquired(text2);
+          }
+          return;
+        }
         const rawLoc = qrResult.location;
         const targetLoc = {
           topLeftCorner: { x: rawLoc.topLeftCorner.x * scaleX, y: rawLoc.topLeftCorner.y * scaleY },
@@ -2437,23 +2525,17 @@ var init_overlay = __esm({
         };
         this.currentLocation = lerpLocation(this.currentLocation, targetLoc, 0.45);
         const bounds = computeBounds(this.currentLocation);
-        this.boxElement.style.visibility = "visible";
-        this.boxElement.style.left = `${Math.round(bounds.minX)}px`;
-        this.boxElement.style.top = `${Math.round(bounds.minY)}px`;
-        this.boxElement.style.width = `${Math.round(bounds.width)}px`;
-        this.boxElement.style.height = `${Math.round(bounds.height)}px`;
+        if (!this.anchorElement || !this.anchorElement.isConnected) {
+          this.anchorElement = findAnchorElement(bounds.centerX, bounds.centerY);
+        }
+        this.anchorOffset = computeAnchorOffset(this.anchorElement, bounds);
         this.docBounds = {
           docX: bounds.minX + window.scrollX,
           docY: bounds.minY + window.scrollY,
           width: bounds.width,
           height: bounds.height
         };
-        const spaceBelow = window.innerHeight - bounds.maxY;
-        if (spaceBelow < 180) {
-          this.hudCard.classList.add("qr-flipped");
-        } else {
-          this.hudCard.classList.remove("qr-flipped");
-        }
+        this.applyPosition(bounds.minX, bounds.minY, bounds.width, bounds.height, true);
         const text = qrResult.data;
         if (text !== this.lastDetectedText) {
           this.lastDetectedText = text;
@@ -2462,21 +2544,51 @@ var init_overlay = __esm({
         }
       }
       /**
-       * Instantly compensates bounding box position on page scroll (60/120 FPS).
+       * Applies position and card orientation.
        */
-      onScroll() {
-        if (!this.docBounds || !this.boxElement || this.boxElement.classList.contains("qr-hidden")) {
+      applyPosition(x, y, width, height, isVisible) {
+        if (!this.boxElement) return;
+        if (!isVisible) {
+          this.boxElement.style.visibility = "hidden";
           return;
         }
-        const currentViewportX = this.docBounds.docX - window.scrollX;
-        const currentViewportY = this.docBounds.docY - window.scrollY;
-        const isOut = currentViewportY + this.docBounds.height < -10 || currentViewportY > window.innerHeight + 10 || currentViewportX + this.docBounds.width < -10 || currentViewportX > window.innerWidth + 10;
-        if (isOut) {
-          this.boxElement.style.visibility = "hidden";
+        this.boxElement.style.visibility = "visible";
+        this.boxElement.style.left = `${Math.round(x)}px`;
+        this.boxElement.style.top = `${Math.round(y)}px`;
+        if (width > 0) this.boxElement.style.width = `${Math.round(width)}px`;
+        if (height > 0) this.boxElement.style.height = `${Math.round(height)}px`;
+        const spaceBelow = window.innerHeight - (y + height);
+        if (spaceBelow < 180) {
+          this.hudCard.classList.add("qr-flipped");
         } else {
-          this.boxElement.style.visibility = "visible";
-          this.boxElement.style.left = `${Math.round(currentViewportX)}px`;
-          this.boxElement.style.top = `${Math.round(currentViewportY)}px`;
+          this.hudCard.classList.remove("qr-flipped");
+        }
+      }
+      /**
+       * Instantly compensates bounding box position on page scroll (60/120 FPS)
+       * using real-time DOM element bounding rect.
+       */
+      onScroll() {
+        if (!this.boxElement || this.boxElement.classList.contains("qr-hidden")) {
+          return;
+        }
+        this.isScrolling = true;
+        if (this.scrollTimer) clearTimeout(this.scrollTimer);
+        this.scrollTimer = setTimeout(() => {
+          this.isScrolling = false;
+        }, 130);
+        if (this.anchorElement && this.anchorElement.isConnected && this.anchorOffset) {
+          const pos = resolveAnchorPosition(this.anchorElement, this.anchorOffset);
+          if (pos) {
+            this.applyPosition(pos.x, pos.y, pos.width, pos.height, pos.isVisible);
+            return;
+          }
+        }
+        if (this.docBounds) {
+          const currentViewportX = this.docBounds.docX - window.scrollX;
+          const currentViewportY = this.docBounds.docY - window.scrollY;
+          const isOut = currentViewportY + this.docBounds.height < -10 || currentViewportY > window.innerHeight + 10 || currentViewportX + this.docBounds.width < -10 || currentViewportX > window.innerWidth + 10;
+          this.applyPosition(currentViewportX, currentViewportY, this.docBounds.width, this.docBounds.height, !isOut);
         }
       }
       /**
@@ -2608,6 +2720,10 @@ var init_overlay = __esm({
        * Unmounts overlay and cleans up DOM.
        */
       unmount() {
+        if (this.scrollTimer) {
+          clearTimeout(this.scrollTimer);
+          this.scrollTimer = null;
+        }
         if (this.root && this.root.parentNode) {
           this.root.parentNode.removeChild(this.root);
         }
@@ -2617,6 +2733,10 @@ var init_overlay = __esm({
         this.miniBadge = null;
         this.currentLocation = null;
         this.lastDetectedText = null;
+        this.anchorElement = null;
+        this.anchorOffset = null;
+        this.docBounds = null;
+        this.isScrolling = false;
       }
     };
   }

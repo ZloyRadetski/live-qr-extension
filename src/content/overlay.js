@@ -6,6 +6,7 @@
 import { classifyContent } from '../utils/parser.js';
 import { computeBounds, lerpLocation } from '../utils/coordinates.js';
 import { addScanHistory } from '../utils/storage.js';
+import { findAnchorElement, computeAnchorOffset, resolveAnchorPosition } from '../utils/dom-anchor.js';
 
 export class QROverlayManager {
   constructor(options = {}) {
@@ -23,7 +24,11 @@ export class QROverlayManager {
 
     this.currentLocation = null;
     this.lastDetectedText = null;
-    this.docBounds = null; // Document-relative coordinates for smooth scrolling
+    this.docBounds = null;
+    this.anchorElement = null;
+    this.anchorOffset = null;
+    this.isScrolling = false;
+    this.scrollTimer = null;
     this.missingFrames = 0;
     this.maxMissingFrames = 8; // Fade out after ~8 missing frames
     this.audioCtx = null;
@@ -79,12 +84,26 @@ export class QROverlayManager {
       if (this.missingFrames > this.maxMissingFrames) {
         this.boxElement.classList.add('qr-hidden');
         this.currentLocation = null;
+        this.anchorElement = null;
+        this.anchorOffset = null;
+        this.docBounds = null;
       }
       return;
     }
 
     this.missingFrames = 0;
     this.boxElement.classList.remove('qr-hidden');
+
+    // If user is actively scrolling, do not let delayed screenshot coordinates jerk the box
+    if (this.isScrolling) {
+      const text = qrResult.data;
+      if (text !== this.lastDetectedText) {
+        this.lastDetectedText = text;
+        this.renderCardContent(text);
+        this.onNewQRAcquired(text);
+      }
+      return;
+    }
 
     // Scale location points
     const rawLoc = qrResult.location;
@@ -99,14 +118,13 @@ export class QROverlayManager {
     this.currentLocation = lerpLocation(this.currentLocation, targetLoc, 0.45);
     const bounds = computeBounds(this.currentLocation);
 
-    // Apply position and dimensions
-    this.boxElement.style.visibility = 'visible';
-    this.boxElement.style.left = `${Math.round(bounds.minX)}px`;
-    this.boxElement.style.top = `${Math.round(bounds.minY)}px`;
-    this.boxElement.style.width = `${Math.round(bounds.width)}px`;
-    this.boxElement.style.height = `${Math.round(bounds.height)}px`;
+    // Anchor to the real DOM element under the QR code (IMG, VIDEO, CANVAS, etc.)
+    if (!this.anchorElement || !this.anchorElement.isConnected) {
+      this.anchorElement = findAnchorElement(bounds.centerX, bounds.centerY);
+    }
+    this.anchorOffset = computeAnchorOffset(this.anchorElement, bounds);
 
-    // Store document-relative coordinates for 60/120fps scroll tracking
+    // Document-relative fallback
     this.docBounds = {
       docX: bounds.minX + window.scrollX,
       docY: bounds.minY + window.scrollY,
@@ -114,13 +132,8 @@ export class QROverlayManager {
       height: bounds.height
     };
 
-    // Flip card if too close to bottom of screen
-    const spaceBelow = window.innerHeight - bounds.maxY;
-    if (spaceBelow < 180) {
-      this.hudCard.classList.add('qr-flipped');
-    } else {
-      this.hudCard.classList.remove('qr-flipped');
-    }
+    // Apply viewport position
+    this.applyPosition(bounds.minX, bounds.minY, bounds.width, bounds.height, true);
 
     // New QR detected or changed?
     const text = qrResult.data;
@@ -132,29 +145,69 @@ export class QROverlayManager {
   }
 
   /**
-   * Instantly compensates bounding box position on page scroll (60/120 FPS).
+   * Applies position and card orientation.
    */
-  onScroll() {
-    if (!this.docBounds || !this.boxElement || this.boxElement.classList.contains('qr-hidden')) {
+  applyPosition(x, y, width, height, isVisible) {
+    if (!this.boxElement) return;
+
+    if (!isVisible) {
+      this.boxElement.style.visibility = 'hidden';
       return;
     }
 
-    const currentViewportX = this.docBounds.docX - window.scrollX;
-    const currentViewportY = this.docBounds.docY - window.scrollY;
+    this.boxElement.style.visibility = 'visible';
+    this.boxElement.style.left = `${Math.round(x)}px`;
+    this.boxElement.style.top = `${Math.round(y)}px`;
+    if (width > 0) this.boxElement.style.width = `${Math.round(width)}px`;
+    if (height > 0) this.boxElement.style.height = `${Math.round(height)}px`;
 
-    const isOut = (
-      currentViewportY + this.docBounds.height < -10 ||
-      currentViewportY > window.innerHeight + 10 ||
-      currentViewportX + this.docBounds.width < -10 ||
-      currentViewportX > window.innerWidth + 10
-    );
-
-    if (isOut) {
-      this.boxElement.style.visibility = 'hidden';
+    // Flip card if too close to bottom of screen
+    const spaceBelow = window.innerHeight - (y + height);
+    if (spaceBelow < 180) {
+      this.hudCard.classList.add('qr-flipped');
     } else {
-      this.boxElement.style.visibility = 'visible';
-      this.boxElement.style.left = `${Math.round(currentViewportX)}px`;
-      this.boxElement.style.top = `${Math.round(currentViewportY)}px`;
+      this.hudCard.classList.remove('qr-flipped');
+    }
+  }
+
+  /**
+   * Instantly compensates bounding box position on page scroll (60/120 FPS)
+   * using real-time DOM element bounding rect.
+   */
+  onScroll() {
+    if (!this.boxElement || this.boxElement.classList.contains('qr-hidden')) {
+      return;
+    }
+
+    // Freeze background snapshot overwrites during active scroll
+    this.isScrolling = true;
+    if (this.scrollTimer) clearTimeout(this.scrollTimer);
+    this.scrollTimer = setTimeout(() => {
+      this.isScrolling = false;
+    }, 130);
+
+    // 1. Primary: Track anchored DOM element in real-time
+    if (this.anchorElement && this.anchorElement.isConnected && this.anchorOffset) {
+      const pos = resolveAnchorPosition(this.anchorElement, this.anchorOffset);
+      if (pos) {
+        this.applyPosition(pos.x, pos.y, pos.width, pos.height, pos.isVisible);
+        return;
+      }
+    }
+
+    // 2. Fallback: Track document coordinates
+    if (this.docBounds) {
+      const currentViewportX = this.docBounds.docX - window.scrollX;
+      const currentViewportY = this.docBounds.docY - window.scrollY;
+
+      const isOut = (
+        currentViewportY + this.docBounds.height < -10 ||
+        currentViewportY > window.innerHeight + 10 ||
+        currentViewportX + this.docBounds.width < -10 ||
+        currentViewportX > window.innerWidth + 10
+      );
+
+      this.applyPosition(currentViewportX, currentViewportY, this.docBounds.width, this.docBounds.height, !isOut);
     }
   }
 
@@ -308,6 +361,10 @@ export class QROverlayManager {
    * Unmounts overlay and cleans up DOM.
    */
   unmount() {
+    if (this.scrollTimer) {
+      clearTimeout(this.scrollTimer);
+      this.scrollTimer = null;
+    }
     if (this.root && this.root.parentNode) {
       this.root.parentNode.removeChild(this.root);
     }
@@ -317,6 +374,10 @@ export class QROverlayManager {
     this.miniBadge = null;
     this.currentLocation = null;
     this.lastDetectedText = null;
+    this.anchorElement = null;
+    this.anchorOffset = null;
+    this.docBounds = null;
+    this.isScrolling = false;
   }
 }
 
