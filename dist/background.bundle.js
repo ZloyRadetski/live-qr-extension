@@ -10331,6 +10331,7 @@
     return { cropCanvas, cropCtx };
   }
   var tabVideoRects = /* @__PURE__ */ new Map();
+  var fullScanCounter = 0;
   function decodeVideoCrops(img, videoInfo) {
     if (!videoInfo || !videoInfo.rects || videoInfo.rects.length === 0) return null;
     const { cropCanvas: cCanvas, cropCtx: cCtx } = getCropCanvas();
@@ -10362,8 +10363,11 @@
       cCtx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
       let imgData = cCtx.getImageData(0, 0, cropW, cropH);
       let count = 0;
-      while (count < 4) {
-        const code = (0, import_jsqr.default)(imgData.data, cropW, cropH, { inversionAttempts: "attemptBoth" });
+      while (count < 3) {
+        let code = (0, import_jsqr.default)(imgData.data, cropW, cropH, { inversionAttempts: "dontInvert" });
+        if (!code) {
+          code = (0, import_jsqr.default)(imgData.data, cropW, cropH, { inversionAttempts: "onlyInvert" });
+        }
         if (!code) break;
         const loc = code.location;
         qrs.push({
@@ -10387,17 +10391,23 @@
     }
     return null;
   }
-  async function decodeDataUrl(dataUrl, maxW = 1080, videoInfo = null) {
+  async function decodeDataUrl(dataUrl, maxW = 720, videoInfo = null) {
     const { canvas: canvas2, ctx: ctx2, cachedImg: cachedImg2 } = getCanvas();
     if (!canvas2 || !ctx2 || !cachedImg2) return null;
     return new Promise((resolve) => {
       cachedImg2.onload = () => {
-        if (videoInfo && videoInfo.rects && videoInfo.rects.length > 0) {
+        const hasVideos = videoInfo && videoInfo.rects && videoInfo.rects.length > 0;
+        if (hasVideos) {
           const videoResult = decodeVideoCrops(cachedImg2, videoInfo);
           if (videoResult && videoResult.qrs && videoResult.qrs.length > 0) {
             resolve(videoResult);
             return;
           }
+        }
+        fullScanCounter++;
+        if (hasVideos && fullScanCounter % 3 !== 0) {
+          resolve(null);
+          return;
         }
         let w = cachedImg2.width;
         let h = cachedImg2.height;
@@ -10413,10 +10423,13 @@
         ctx2.drawImage(cachedImg2, 0, 0, w, h);
         let imgData = ctx2.getImageData(0, 0, w, h);
         const qrs = [];
-        const maxQRs = 6;
+        const maxQRs = 4;
         let count = 0;
         while (count < maxQRs) {
-          const code = (0, import_jsqr.default)(imgData.data, w, h, { inversionAttempts: "attemptBoth" });
+          let code = (0, import_jsqr.default)(imgData.data, w, h, { inversionAttempts: "dontInvert" });
+          if (!code) {
+            code = (0, import_jsqr.default)(imgData.data, w, h, { inversionAttempts: "onlyInvert" });
+          }
           if (!code) break;
           qrs.push(code);
           count++;
@@ -10470,14 +10483,14 @@
           return;
         }
         const resolution = settings.scanResolution || "1080";
-        let maxW = 1080;
-        let quality = 92;
+        let maxW = 720;
+        let quality = 75;
         if (resolution === "720") {
-          maxW = 720;
-          quality = 85;
+          maxW = 540;
+          quality = 70;
         } else if (resolution === "1440") {
-          maxW = 1440;
-          quality = 95;
+          maxW = 1080;
+          quality = 82;
         }
         const dataUrl = await browser.tabs.captureVisibleTab(tab.windowId, {
           format: "jpeg",
@@ -10518,10 +10531,11 @@
     }
     if (isGlobalActive) {
       const settings2 = await getCachedSettings();
-      const baseFps = Math.max(1, Math.min(120, settings2.scanRate || 12));
-      const targetInterval = Math.round(1e3 / baseFps);
+      const userFps = Math.max(1, Math.min(120, settings2.scanRate || 12));
+      const effectiveFps = hasActiveQR ? Math.min(userFps, 10) : Math.min(userFps, 4);
+      const targetInterval = Math.round(1e3 / effectiveFps);
       const elapsed = performance.now() - loopStartTime;
-      const nextDelay = Math.max(1, targetInterval - elapsed);
+      const nextDelay = Math.max(10, targetInterval - elapsed);
       loopTimer = setTimeout(globalCaptureLoop, nextDelay);
     } else {
       isLoopRunning = false;

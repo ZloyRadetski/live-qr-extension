@@ -63,6 +63,8 @@ function getCropCanvas() {
 // Active video player rects reported by content scripts (tabId -> { rects, dpr, viewportWidth, viewportHeight })
 export const tabVideoRects = new Map();
 
+let fullScanCounter = 0;
+
 /**
  * High-speed targeted decode of visible video player crops directly from the full-resolution screenshot.
  * Bypasses full screen downsampling and JPEG degradation, decoding in ~2ms at 100% native resolution.
@@ -103,8 +105,12 @@ export function decodeVideoCrops(img, videoInfo) {
     let imgData = cCtx.getImageData(0, 0, cropW, cropH);
     let count = 0;
 
-    while (count < 4) {
-      const code = jsQR(imgData.data, cropW, cropH, { inversionAttempts: 'attemptBoth' });
+    while (count < 3) {
+      // Fast path: standard orientation first (<1.5ms)
+      let code = jsQR(imgData.data, cropW, cropH, { inversionAttempts: 'dontInvert' });
+      if (!code) {
+        code = jsQR(imgData.data, cropW, cropH, { inversionAttempts: 'onlyInvert' });
+      }
       if (!code) break;
 
       const loc = code.location;
@@ -138,18 +144,19 @@ export function decodeVideoCrops(img, videoInfo) {
  * Decodes a screen capture data URL with jsQR.
  * Checks visible video player crops first at full resolution, then falls back to full-screen downsampled decoding.
  * @param {string} dataUrl
- * @param {number} [maxW=1080]
+ * @param {number} [maxW=720]
  * @param {any} [videoInfo=null]
  * @returns {Promise<{ qrs: any[], qr: any, scanWidth: number, scanHeight: number } | null>}
  */
-export async function decodeDataUrl(dataUrl, maxW = 1080, videoInfo = null) {
+export async function decodeDataUrl(dataUrl, maxW = 720, videoInfo = null) {
   const { canvas, ctx, cachedImg } = getCanvas();
   if (!canvas || !ctx || !cachedImg) return null;
 
   return new Promise((resolve) => {
     cachedImg.onload = () => {
       // 1. High-speed targeted scan of visible video players
-      if (videoInfo && videoInfo.rects && videoInfo.rects.length > 0) {
+      const hasVideos = videoInfo && videoInfo.rects && videoInfo.rects.length > 0;
+      if (hasVideos) {
         const videoResult = decodeVideoCrops(cachedImg, videoInfo);
         if (videoResult && videoResult.qrs && videoResult.qrs.length > 0) {
           resolve(videoResult);
@@ -158,10 +165,18 @@ export async function decodeDataUrl(dataUrl, maxW = 1080, videoInfo = null) {
       }
 
       // 2. Full-screen scan fallback
+      // When a video is active on screen, the rest of the tab is static HTML (already handled by DOM scan).
+      // Only run full-screen fallback scan every 3rd frame to avoid wasting CPU!
+      fullScanCounter++;
+      if (hasVideos && (fullScanCounter % 3 !== 0)) {
+        resolve(null);
+        return;
+      }
+
       let w = cachedImg.width;
       let h = cachedImg.height;
 
-      // Downsample to maxW (e.g. 720, 1080, 1440) for optimal speed/accuracy balance
+      // Downsample to maxW (e.g. 540, 720, 1080) for optimal speed/accuracy balance
       if (w > maxW) {
         const ratio = maxW / w;
         w = Math.round(w * ratio);
@@ -176,11 +191,14 @@ export async function decodeDataUrl(dataUrl, maxW = 1080, videoInfo = null) {
       ctx.drawImage(cachedImg, 0, 0, w, h);
       let imgData = ctx.getImageData(0, 0, w, h);
       const qrs = [];
-      const maxQRs = 6;
+      const maxQRs = 4;
       let count = 0;
 
       while (count < maxQRs) {
-        const code = jsQR(imgData.data, w, h, { inversionAttempts: 'attemptBoth' });
+        let code = jsQR(imgData.data, w, h, { inversionAttempts: 'dontInvert' });
+        if (!code) {
+          code = jsQR(imgData.data, w, h, { inversionAttempts: 'onlyInvert' });
+        }
         if (!code) break;
         qrs.push(code);
         count++;
@@ -257,14 +275,14 @@ async function globalCaptureLoop() {
 
       // Configure resolution and JPEG quality according to user settings
       const resolution = settings.scanResolution || '1080';
-      let maxW = 1080;
-      let quality = 92; // 92 eliminates compression artifacts while remaining lightning fast
+      let maxW = 720;
+      let quality = 75; // 75 produces compact ~350KB payload, eliminating GC memory churn
       if (resolution === '720') {
-        maxW = 720;
-        quality = 85;
+        maxW = 540;
+        quality = 70;
       } else if (resolution === '1440') {
-        maxW = 1440;
-        quality = 95;
+        maxW = 1080;
+        quality = 82;
       }
 
       const dataUrl = await browser.tabs.captureVisibleTab(tab.windowId, {
@@ -309,10 +327,14 @@ async function globalCaptureLoop() {
   if (isGlobalActive) {
     const settings = await getCachedSettings();
 
-    const baseFps = Math.max(1, Math.min(120, settings.scanRate || 12));
-    const targetInterval = Math.round(1000 / baseFps);
+    // ADAPTIVE POWER MANAGEMENT:
+    // When no QR is on screen: run at 4 FPS (250ms interval, ~1% CPU load).
+    // When a QR is active on screen: run at up to user scanRate (e.g. 8-10 FPS) for responsive tracking.
+    const userFps = Math.max(1, Math.min(120, settings.scanRate || 12));
+    const effectiveFps = hasActiveQR ? Math.min(userFps, 10) : Math.min(userFps, 4);
+    const targetInterval = Math.round(1000 / effectiveFps);
     const elapsed = performance.now() - loopStartTime;
-    const nextDelay = Math.max(1, targetInterval - elapsed);
+    const nextDelay = Math.max(10, targetInterval - elapsed);
 
     loopTimer = setTimeout(globalCaptureLoop, nextDelay);
   } else {

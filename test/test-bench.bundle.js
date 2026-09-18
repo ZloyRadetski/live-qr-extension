@@ -12469,7 +12469,11 @@
     const vh = typeof window !== "undefined" ? window.innerHeight : 1080;
     const inBounds = rect.bottom >= -margin && rect.top <= vh + margin && rect.right >= -margin && rect.left <= vw + margin;
     if (!inBounds) return false;
-    if (typeof window !== "undefined" && typeof window.getComputedStyle === "function") {
+    if (typeof el.checkVisibility === "function") {
+      if (!el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) {
+        return false;
+      }
+    } else if (typeof window !== "undefined" && typeof window.getComputedStyle === "function") {
       try {
         const style = window.getComputedStyle(el);
         if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse" || style.opacity === "0") {

@@ -51,8 +51,12 @@ export function isElementInViewport(el, margin = 50) {
   );
   if (!inBounds) return false;
 
-  // Computed style check in browser environments
-  if (typeof window !== 'undefined' && typeof window.getComputedStyle === 'function') {
+  // Native fast visibility check (avoids forced layout reflow)
+  if (typeof el.checkVisibility === 'function') {
+    if (!el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) {
+      return false;
+    }
+  } else if (typeof window !== 'undefined' && typeof window.getComputedStyle === 'function') {
     try {
       const style = window.getComputedStyle(el);
       if (

@@ -10457,7 +10457,11 @@
     const vh = typeof window !== "undefined" ? window.innerHeight : 1080;
     const inBounds = rect.bottom >= -margin && rect.top <= vh + margin && rect.right >= -margin && rect.left <= vw + margin;
     if (!inBounds) return false;
-    if (typeof window !== "undefined" && typeof window.getComputedStyle === "function") {
+    if (typeof el.checkVisibility === "function") {
+      if (!el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) {
+        return false;
+      }
+    } else if (typeof window !== "undefined" && typeof window.getComputedStyle === "function") {
       try {
         const style = window.getComputedStyle(el);
         if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse" || style.opacity === "0") {
@@ -11288,8 +11292,14 @@
   var domScanInterval = null;
   var domObserver = null;
   var domMutationDebounce = null;
+  var lastReportedVideoKey = "";
   function reportVisibleVideoRects() {
     const rects = getVisibleVideoRects();
+    const key = rects.map((r) => `${r.left},${r.top},${r.width},${r.height}`).join(";");
+    if (key === lastReportedVideoKey) {
+      return;
+    }
+    lastReportedVideoKey = key;
     try {
       browser.runtime.sendMessage({
         type: "VIDEO_RECTS_UPDATE",
@@ -11347,19 +11357,35 @@
   }
   function setupDomObserver() {
     if (domObserver || typeof MutationObserver === "undefined") return;
-    domObserver = new MutationObserver(() => {
+    domObserver = new MutationObserver((mutations) => {
+      let hasRelevantMutation = false;
+      for (const m of mutations) {
+        if (m.type === "childList") {
+          for (const node of m.addedNodes) {
+            if (node.nodeType === 1 && (node.tagName === "IMG" || node.tagName === "VIDEO" || node.tagName === "CANVAS" || node.querySelector?.("img, video, canvas"))) {
+              hasRelevantMutation = true;
+              break;
+            }
+          }
+        } else if (m.type === "attributes" && (m.attributeName === "src" || m.attributeName === "srcset")) {
+          hasRelevantMutation = true;
+          break;
+        }
+        if (hasRelevantMutation) break;
+      }
+      if (!hasRelevantMutation) return;
       clearTimeout(domMutationDebounce);
       domMutationDebounce = setTimeout(() => {
         reportVisibleVideoRects();
         triggerDomScan();
-      }, 30);
+      }, 200);
     });
     if (document.body) {
       domObserver.observe(document.body, {
         childList: true,
         subtree: true,
         attributes: true,
-        attributeFilter: ["src", "srcset", "class", "style", "hidden"]
+        attributeFilter: ["src", "srcset"]
       });
     }
   }
