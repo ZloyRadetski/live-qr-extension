@@ -250,9 +250,9 @@
         ...options
       };
       this.root = null;
-      this.statusBar = null;
       this.boxElement = null;
       this.hudCard = null;
+      this.miniBadge = null;
       this.currentLocation = null;
       this.lastDetectedText = null;
       this.missingFrames = 0;
@@ -266,18 +266,6 @@
       if (this.root) return;
       this.root = document.createElement("div");
       this.root.id = "qr-radar-root";
-      this.statusBar = document.createElement("div");
-      this.statusBar.className = "qr-radar-status-bar";
-      this.statusBar.innerHTML = `
-      <div class="qr-radar-pulse-dot"></div>
-      <span class="qr-radar-status-text">QR Radar Active</span>
-      <button class="qr-radar-stop-btn" title="Stop scanner">Stop</button>
-    `;
-      this.statusBar.querySelector(".qr-radar-stop-btn").addEventListener("click", (e) => {
-        e.stopPropagation();
-        this.options.onStopRequested();
-      });
-      this.root.appendChild(this.statusBar);
       this.boxElement = document.createElement("div");
       this.boxElement.className = "qr-radar-box qr-hidden";
       this.boxElement.innerHTML = `
@@ -286,8 +274,13 @@
         <div class="qr-radar-corner qr-radar-corner-tr"></div>
         <div class="qr-radar-corner qr-radar-corner-bl"></div>
         <div class="qr-radar-corner qr-radar-corner-br"></div>
+        <div class="qr-radar-mini-badge" title="Hover for details">
+          <span class="qr-mini-dot"></span>
+          <span class="qr-mini-type">QR</span>
+        </div>
       </div>
     `;
+      this.miniBadge = this.boxElement.querySelector(".qr-radar-mini-badge");
       this.hudCard = document.createElement("div");
       this.hudCard.className = "qr-radar-hud-card";
       this.boxElement.appendChild(this.hudCard);
@@ -383,6 +376,21 @@
           this.copyToClipboard(text, copyBtn);
         });
       }
+      if (this.miniBadge) {
+        const typeLabels = {
+          url: "\u{1F517} LINK",
+          wifi: "\u{1F4F6} WIFI",
+          email: "\u{1F4E7} EMAIL",
+          phone: "\u{1F4DE} CALL",
+          sms: "\u{1F4AC} SMS",
+          geo: "\u{1F4CD} GEO",
+          text: "\u{1F4DD} TEXT"
+        };
+        const typeText = typeLabels[parsed.type] || "QR";
+        const typeSpan = this.miniBadge.querySelector(".qr-mini-type");
+        if (typeSpan) typeSpan.textContent = typeText;
+        this.miniBadge.className = `qr-radar-mini-badge qr-mini-${parsed.type}`;
+      }
     }
     /**
      * Triggered when a new QR code is detected.
@@ -456,9 +464,9 @@
         this.root.parentNode.removeChild(this.root);
       }
       this.root = null;
-      this.statusBar = null;
       this.boxElement = null;
       this.hudCard = null;
+      this.miniBadge = null;
       this.currentLocation = null;
       this.lastDetectedText = null;
     }

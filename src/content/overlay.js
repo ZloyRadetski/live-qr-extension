@@ -17,9 +17,9 @@ export class QROverlayManager {
     };
 
     this.root = null;
-    this.statusBar = null;
     this.boxElement = null;
     this.hudCard = null;
+    this.miniBadge = null;
 
     this.currentLocation = null;
     this.lastDetectedText = null;
@@ -37,22 +37,7 @@ export class QROverlayManager {
     this.root = document.createElement('div');
     this.root.id = 'qr-radar-root';
 
-    // 1. Status Bar
-    this.statusBar = document.createElement('div');
-    this.statusBar.className = 'qr-radar-status-bar';
-    this.statusBar.innerHTML = `
-      <div class="qr-radar-pulse-dot"></div>
-      <span class="qr-radar-status-text">QR Radar Active</span>
-      <button class="qr-radar-stop-btn" title="Stop scanner">Stop</button>
-    `;
-
-    this.statusBar.querySelector('.qr-radar-stop-btn').addEventListener('click', (e) => {
-      e.stopPropagation();
-      this.options.onStopRequested();
-    });
-    this.root.appendChild(this.statusBar);
-
-    // 2. Bounding Box & Corners
+    // Bounding Box & Corners
     this.boxElement = document.createElement('div');
     this.boxElement.className = 'qr-radar-box qr-hidden';
     this.boxElement.innerHTML = `
@@ -61,10 +46,16 @@ export class QROverlayManager {
         <div class="qr-radar-corner qr-radar-corner-tr"></div>
         <div class="qr-radar-corner qr-radar-corner-bl"></div>
         <div class="qr-radar-corner qr-radar-corner-br"></div>
+        <div class="qr-radar-mini-badge" title="Hover for details">
+          <span class="qr-mini-dot"></span>
+          <span class="qr-mini-type">QR</span>
+        </div>
       </div>
     `;
 
-    // 3. Floating HUD Card
+    this.miniBadge = this.boxElement.querySelector('.qr-radar-mini-badge');
+
+    // Floating HUD Card (hidden by default, expands on hover)
     this.hudCard = document.createElement('div');
     this.hudCard.className = 'qr-radar-hud-card';
     this.boxElement.appendChild(this.hudCard);
@@ -179,6 +170,23 @@ export class QROverlayManager {
         this.copyToClipboard(text, copyBtn);
       });
     }
+
+    // Update mini badge label on the frame
+    if (this.miniBadge) {
+      const typeLabels = {
+        url: '🔗 LINK',
+        wifi: '📶 WIFI',
+        email: '📧 EMAIL',
+        phone: '📞 CALL',
+        sms: '💬 SMS',
+        geo: '📍 GEO',
+        text: '📝 TEXT'
+      };
+      const typeText = typeLabels[parsed.type] || 'QR';
+      const typeSpan = this.miniBadge.querySelector('.qr-mini-type');
+      if (typeSpan) typeSpan.textContent = typeText;
+      this.miniBadge.className = `qr-radar-mini-badge qr-mini-${parsed.type}`;
+    }
   }
 
   /**
@@ -267,9 +275,9 @@ export class QROverlayManager {
       this.root.parentNode.removeChild(this.root);
     }
     this.root = null;
-    this.statusBar = null;
     this.boxElement = null;
     this.hudCard = null;
+    this.miniBadge = null;
     this.currentLocation = null;
     this.lastDetectedText = null;
   }
