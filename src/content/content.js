@@ -29,11 +29,17 @@ async function getCachedContentSettings() {
   return cachedContentSettings;
 }
 
+let lastVideoRectsReportTime = 0;
+
 /**
  * Reports visible <video> element bounding rects to background worker for high-res crop scanning.
- * Deduplicates calls: only sends IPC message when rect positions actually change.
+ * Time-throttled (500ms) + deduplicates: avoids spamming querySelectorAll and IPC.
  */
 function reportVisibleVideoRects() {
+  const now = Date.now();
+  if (now - lastVideoRectsReportTime < 500) return;
+  lastVideoRectsReportTime = now;
+
   const rects = getVisibleVideoRects();
   const key = rects.map((r) => `${r.left},${r.top},${r.width},${r.height}`).join(';');
   if (key === lastReportedVideoKey) {
@@ -58,8 +64,10 @@ function reportVisibleVideoRects() {
  * @returns {number} Interval in milliseconds
  */
 function getDomScanIntervalMs(scanRate) {
-  const fps = Math.max(1, Math.min(120, scanRate || 12));
-  return Math.max(20, Math.round(1000 / fps));
+  // DOM scan targets static images/canvases — they don't change 12x/sec.
+  // Cap at 3 FPS to save CPU for video capture and page rendering.
+  const fps = Math.max(1, Math.min(3, scanRate || 3));
+  return Math.round(1000 / fps);
 }
 
 /**

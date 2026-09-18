@@ -10592,7 +10592,7 @@
   }
   function scanVisibleDomImages() {
     if (typeof document === "undefined") return [];
-    const elements = Array.from(document.querySelectorAll("img, canvas, video"));
+    const elements = Array.from(document.querySelectorAll("img, canvas"));
     const allResults = [];
     for (const el of elements) {
       if (isElementInViewport(el)) {
@@ -11304,7 +11304,11 @@
     }
     return cachedContentSettings;
   }
+  var lastVideoRectsReportTime = 0;
   function reportVisibleVideoRects() {
+    const now = Date.now();
+    if (now - lastVideoRectsReportTime < 500) return;
+    lastVideoRectsReportTime = now;
     const rects = getVisibleVideoRects();
     const key = rects.map((r) => `${r.left},${r.top},${r.width},${r.height}`).join(";");
     if (key === lastReportedVideoKey) {
@@ -11324,8 +11328,8 @@
     }
   }
   function getDomScanIntervalMs(scanRate) {
-    const fps = Math.max(1, Math.min(120, scanRate || 12));
-    return Math.max(20, Math.round(1e3 / fps));
+    const fps = Math.max(1, Math.min(3, scanRate || 3));
+    return Math.round(1e3 / fps);
   }
   function updateDomScanRate(scanRate) {
     if (domScanInterval) {

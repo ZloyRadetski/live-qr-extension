@@ -10331,7 +10331,6 @@
     return { cropCanvas, cropCtx };
   }
   var tabVideoRects = /* @__PURE__ */ new Map();
-  var fullScanCounter = 0;
   function decodeVideoCrops(img, videoInfo) {
     if (!videoInfo || !videoInfo.rects || videoInfo.rects.length === 0) return null;
     const { cropCanvas: cCanvas, cropCtx: cCtx } = getCropCanvas();
@@ -10341,47 +10340,56 @@
     const imgH = img.naturalHeight || img.height;
     const qrs = [];
     for (const rect of videoInfo.rects) {
-      let cropX = Math.round(rect.left * dpr);
-      let cropY = Math.round(rect.top * dpr);
-      let cropW = Math.round(rect.width * dpr);
-      let cropH = Math.round(rect.height * dpr);
-      if (cropX < 0) {
-        cropW += cropX;
-        cropX = 0;
+      let srcX = Math.round(rect.left * dpr);
+      let srcY = Math.round(rect.top * dpr);
+      let srcW = Math.round(rect.width * dpr);
+      let srcH = Math.round(rect.height * dpr);
+      if (srcX < 0) {
+        srcW += srcX;
+        srcX = 0;
       }
-      if (cropY < 0) {
-        cropH += cropY;
-        cropY = 0;
+      if (srcY < 0) {
+        srcH += srcY;
+        srcY = 0;
       }
-      if (cropX + cropW > imgW) cropW = imgW - cropX;
-      if (cropY + cropH > imgH) cropH = imgH - cropY;
-      if (cropW < 24 || cropH < 24) continue;
-      if (cCanvas.width !== cropW || cCanvas.height !== cropH) {
-        cCanvas.width = cropW;
-        cCanvas.height = cropH;
+      if (srcX + srcW > imgW) srcW = imgW - srcX;
+      if (srcY + srcH > imgH) srcH = imgH - srcY;
+      if (srcW < 24 || srcH < 24) continue;
+      const maxCropDim = 540;
+      let drawW = srcW, drawH = srcH;
+      if (drawW > maxCropDim || drawH > maxCropDim) {
+        const ratio = Math.min(maxCropDim / drawW, maxCropDim / drawH);
+        drawW = Math.round(drawW * ratio);
+        drawH = Math.round(drawH * ratio);
       }
-      cCtx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
-      let imgData = cCtx.getImageData(0, 0, cropW, cropH);
+      if (cCanvas.width !== drawW || cCanvas.height !== drawH) {
+        cCanvas.width = drawW;
+        cCanvas.height = drawH;
+      }
+      cCtx.drawImage(img, srcX, srcY, srcW, srcH, 0, 0, drawW, drawH);
+      let imgData = cCtx.getImageData(0, 0, drawW, drawH);
       let count = 0;
+      const scaleBackX = srcW / drawW;
+      const scaleBackY = srcH / drawH;
       while (count < 3) {
-        let code = (0, import_jsqr.default)(imgData.data, cropW, cropH, { inversionAttempts: "dontInvert" });
+        let code = (0, import_jsqr.default)(imgData.data, drawW, drawH, { inversionAttempts: "dontInvert" });
         if (!code) {
-          code = (0, import_jsqr.default)(imgData.data, cropW, cropH, { inversionAttempts: "onlyInvert" });
+          code = (0, import_jsqr.default)(imgData.data, drawW, drawH, { inversionAttempts: "onlyInvert" });
         }
         if (!code) break;
         const loc = code.location;
         qrs.push({
           data: code.data,
           location: {
-            topLeftCorner: { x: (cropX + loc.topLeftCorner.x) / dpr, y: (cropY + loc.topLeftCorner.y) / dpr },
-            topRightCorner: { x: (cropX + loc.topRightCorner.x) / dpr, y: (cropY + loc.topRightCorner.y) / dpr },
-            bottomRightCorner: { x: (cropX + loc.bottomRightCorner.x) / dpr, y: (cropY + loc.bottomRightCorner.y) / dpr },
-            bottomLeftCorner: { x: (cropX + loc.bottomLeftCorner.x) / dpr, y: (cropY + loc.bottomLeftCorner.y) / dpr }
+            topLeftCorner: { x: (srcX + loc.topLeftCorner.x * scaleBackX) / dpr, y: (srcY + loc.topLeftCorner.y * scaleBackY) / dpr },
+            topRightCorner: { x: (srcX + loc.topRightCorner.x * scaleBackX) / dpr, y: (srcY + loc.topRightCorner.y * scaleBackY) / dpr },
+            bottomRightCorner: { x: (srcX + loc.bottomRightCorner.x * scaleBackX) / dpr, y: (srcY + loc.bottomRightCorner.y * scaleBackY) / dpr },
+            bottomLeftCorner: { x: (srcX + loc.bottomLeftCorner.x * scaleBackX) / dpr, y: (srcY + loc.bottomLeftCorner.y * scaleBackY) / dpr }
           }
         });
         count++;
         maskQrRegion(cCtx, loc);
-        imgData = cCtx.getImageData(0, 0, cropW, cropH);
+        imgData = cCtx.getImageData(0, 0, drawW, drawH);
       }
     }
     if (qrs.length > 0) {
@@ -10404,8 +10412,7 @@
             return;
           }
         }
-        fullScanCounter++;
-        if (hasVideos && fullScanCounter % 3 !== 0) {
+        if (hasVideos) {
           resolve(null);
           return;
         }
@@ -10530,8 +10537,8 @@
     } catch (err) {
     }
     if (isGlobalActive) {
-      const userFps = Math.max(1, Math.min(120, settings.scanRate || 12));
-      const effectiveFps = hasActiveQR ? Math.min(userFps, 10) : Math.min(userFps, 4);
+      const userFps = Math.max(1, Math.min(30, settings.scanRate || 12));
+      const effectiveFps = hasActiveQR ? Math.min(userFps, 5) : Math.min(userFps, 2);
       const targetInterval = Math.round(1e3 / effectiveFps);
       const elapsed = performance.now() - loopStartTime;
       const nextDelay = Math.max(10, targetInterval - elapsed);
