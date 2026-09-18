@@ -2649,7 +2649,7 @@
   }
   async function scanVisibleDomImages() {
     if (typeof document === "undefined") return [];
-    const elements = Array.from(document.querySelectorAll("img, canvas, video"));
+    const elements = Array.from(document.querySelectorAll("img, canvas"));
     const allResults = [];
     for (const el of elements) {
       if (isElementInViewport(el)) {

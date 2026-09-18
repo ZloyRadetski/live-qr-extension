@@ -399,7 +399,9 @@ async function scanRemoteImageViaBackground(el, src) {
 export async function scanVisibleDomImages() {
   if (typeof document === 'undefined') return [];
 
-  const elements = Array.from(document.querySelectorAll('img, canvas, video'));
+  // Scan images and canvases in DOM. Video elements are tracked via getVisibleVideoRects
+  // and decoded off-thread in background worker to avoid freezing page playback.
+  const elements = Array.from(document.querySelectorAll('img, canvas'));
   const allResults = [];
 
   for (const el of elements) {
