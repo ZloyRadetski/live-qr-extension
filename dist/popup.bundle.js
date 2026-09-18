@@ -8,7 +8,7 @@
     globalActive: false,
     // Whether scanner runs globally across all tabs
     scanRate: 12,
-    // FPS: 5 (Eco), 12 (Balanced), 20 (Turbo)
+    // FPS: 1 to 120 (Slider, default 12)
     themeColor: "cyan",
     // 'cyan' | 'emerald' | 'violet' | 'gold' | 'pink'
     cardDisplayMode: "hover",
@@ -242,7 +242,8 @@
   var settingSound = document.getElementById("setting-sound");
   var settingAutoCopy = document.getElementById("setting-autocopy");
   var settingPauseScroll = document.getElementById("setting-pause-scroll");
-  var fpsSelector = document.getElementById("fps-selector");
+  var fpsSlider = document.getElementById("fps-slider");
+  var fpsValueBadge = document.getElementById("fps-value-badge");
   var resolutionSelector = document.getElementById("resolution-selector");
   var settingDomImages = document.getElementById("setting-dom-images");
   var currentDomainText = document.getElementById("current-domain-text");
@@ -312,6 +313,21 @@
       toggleLabel.textContent = "Turn ON Scanner (Everywhere)";
     }
   }
+  function updateFpsUI(fps) {
+    if (fpsSlider) {
+      fpsSlider.value = fps;
+      const pct = (fps - 1) / (120 - 1) * 100;
+      fpsSlider.style.background = `linear-gradient(to right, var(--accent-cyan) 0%, var(--accent-cyan) ${pct}%, var(--bg-tertiary) ${pct}%, var(--bg-tertiary) 100%)`;
+    }
+    if (fpsValueBadge) {
+      let modeHint = "";
+      if (fps <= 5) modeHint = " (Eco)";
+      else if (fps === 30) modeHint = " (Std)";
+      else if (fps === 60) modeHint = " (Smooth)";
+      else if (fps >= 120) modeHint = " (Max)";
+      fpsValueBadge.textContent = `${fps} FPS${modeHint}`;
+    }
+  }
   async function loadPreferences() {
     const settings = await getSettings();
     const currentTheme = settings.themeColor || "cyan";
@@ -327,10 +343,8 @@
     settingSound.checked = settings.soundEnabled ?? true;
     settingAutoCopy.checked = settings.autoCopy ?? false;
     settingPauseScroll.checked = settings.pauseOnScroll ?? true;
-    const currentFps = String(settings.scanRate || 12);
-    fpsSelector.querySelectorAll(".segment-btn").forEach((btn) => {
-      btn.classList.toggle("active", btn.dataset.fps === currentFps);
-    });
+    const currentFps = Math.max(1, Math.min(120, settings.scanRate || 12));
+    updateFpsUI(currentFps);
     const currentRes = settings.scanResolution || "1080";
     resolutionSelector.querySelectorAll(".segment-btn").forEach((btn) => {
       btn.classList.toggle("active", btn.dataset.res === currentRes);
@@ -481,12 +495,24 @@
       btn.classList.add("active");
       applySettingChange({ cardDisplayMode: btn.dataset.mode });
     });
-    fpsSelector.addEventListener("click", (e) => {
-      const btn = e.target.closest(".segment-btn");
-      if (!btn) return;
-      fpsSelector.querySelectorAll(".segment-btn").forEach((b) => b.classList.remove("active"));
-      btn.classList.add("active");
-      applySettingChange({ scanRate: parseInt(btn.dataset.fps, 10) });
+    if (fpsSlider) {
+      fpsSlider.addEventListener("input", (e) => {
+        const val = parseInt(e.target.value, 10);
+        updateFpsUI(val);
+      });
+      fpsSlider.addEventListener("change", (e) => {
+        const val = parseInt(e.target.value, 10);
+        applySettingChange({ scanRate: val });
+      });
+    }
+    document.querySelectorAll(".scale-mark").forEach((mark) => {
+      mark.addEventListener("click", () => {
+        const val = parseInt(mark.dataset.val, 10);
+        if (!isNaN(val)) {
+          updateFpsUI(val);
+          applySettingChange({ scanRate: val });
+        }
+      });
     });
     settingGlow.addEventListener("change", () => applySettingChange({ glowAnimation: settingGlow.checked }));
     settingBrackets.addEventListener("change", () => applySettingChange({ cornerBrackets: settingBrackets.checked }));

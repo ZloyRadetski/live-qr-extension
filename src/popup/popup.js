@@ -40,7 +40,8 @@ const settingBrackets = document.getElementById('setting-brackets');
 const settingSound = document.getElementById('setting-sound');
 const settingAutoCopy = document.getElementById('setting-autocopy');
 const settingPauseScroll = document.getElementById('setting-pause-scroll');
-const fpsSelector = document.getElementById('fps-selector');
+const fpsSlider = document.getElementById('fps-slider');
+const fpsValueBadge = document.getElementById('fps-value-badge');
 const resolutionSelector = document.getElementById('resolution-selector');
 const settingDomImages = document.getElementById('setting-dom-images');
 
@@ -133,6 +134,26 @@ function updateUIState(active) {
 }
 
 /**
+ * Updates the FPS slider value, fill progress bar, and badge text.
+ * @param {number} fps 
+ */
+function updateFpsUI(fps) {
+  if (fpsSlider) {
+    fpsSlider.value = fps;
+    const pct = ((fps - 1) / (120 - 1)) * 100;
+    fpsSlider.style.background = `linear-gradient(to right, var(--accent-cyan) 0%, var(--accent-cyan) ${pct}%, var(--bg-tertiary) ${pct}%, var(--bg-tertiary) 100%)`;
+  }
+  if (fpsValueBadge) {
+    let modeHint = '';
+    if (fps <= 5) modeHint = ' (Eco)';
+    else if (fps === 30) modeHint = ' (Std)';
+    else if (fps === 60) modeHint = ' (Smooth)';
+    else if (fps >= 120) modeHint = ' (Max)';
+    fpsValueBadge.textContent = `${fps} FPS${modeHint}`;
+  }
+}
+
+/**
  * Loads saved preferences into UI controls.
  */
 async function loadPreferences() {
@@ -157,11 +178,9 @@ async function loadPreferences() {
   settingAutoCopy.checked = settings.autoCopy ?? false;
   settingPauseScroll.checked = settings.pauseOnScroll ?? true;
 
-  // 4. Speed Profile
-  const currentFps = String(settings.scanRate || 12);
-  fpsSelector.querySelectorAll('.segment-btn').forEach((btn) => {
-    btn.classList.toggle('active', btn.dataset.fps === currentFps);
-  });
+  // 4. Scan Rate Slider (1 to 120 FPS)
+  const currentFps = Math.max(1, Math.min(120, settings.scanRate || 12));
+  updateFpsUI(currentFps);
 
   // 5. Scan Resolution Profile
   const currentRes = settings.scanResolution || '1080';
@@ -352,13 +371,28 @@ function setupEventListeners() {
     applySettingChange({ cardDisplayMode: btn.dataset.mode });
   });
 
-  // Speed FPS profile selector
-  fpsSelector.addEventListener('click', (e) => {
-    const btn = e.target.closest('.segment-btn');
-    if (!btn) return;
-    fpsSelector.querySelectorAll('.segment-btn').forEach((b) => b.classList.remove('active'));
-    btn.classList.add('active');
-    applySettingChange({ scanRate: parseInt(btn.dataset.fps, 10) });
+  // Speed FPS slider (1 to 120 FPS)
+  if (fpsSlider) {
+    fpsSlider.addEventListener('input', (e) => {
+      const val = parseInt(e.target.value, 10);
+      updateFpsUI(val);
+    });
+
+    fpsSlider.addEventListener('change', (e) => {
+      const val = parseInt(e.target.value, 10);
+      applySettingChange({ scanRate: val });
+    });
+  }
+
+  // Preset scale marks click handlers
+  document.querySelectorAll('.scale-mark').forEach((mark) => {
+    mark.addEventListener('click', () => {
+      const val = parseInt(mark.dataset.val, 10);
+      if (!isNaN(val)) {
+        updateFpsUI(val);
+        applySettingChange({ scanRate: val });
+      }
+    });
   });
 
   // Toggles

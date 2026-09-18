@@ -196,11 +196,11 @@ async function globalCaptureLoop() {
 
     // 2. Adaptive rate: If a QR is locked on screen, reduce rate to 4 FPS
     // (the DOM element anchor already handles 60/120 FPS position updates)
-    const baseFps = settings.scanRate || 15;
+    const baseFps = Math.max(1, Math.min(120, settings.scanRate || 12));
     const effectiveFps = hasActiveQR ? Math.min(4, baseFps) : baseFps;
     const targetInterval = Math.round(1000 / effectiveFps);
     const elapsed = performance.now() - loopStartTime;
-    const nextDelay = Math.max(10, targetInterval - elapsed);
+    const nextDelay = Math.max(1, targetInterval - elapsed);
 
     setTimeout(globalCaptureLoop, nextDelay);
   } else {

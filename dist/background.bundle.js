@@ -10060,7 +10060,7 @@
     globalActive: false,
     // Whether scanner runs globally across all tabs
     scanRate: 12,
-    // FPS: 5 (Eco), 12 (Balanced), 20 (Turbo)
+    // FPS: 1 to 120 (Slider, default 12)
     themeColor: "cyan",
     // 'cyan' | 'emerald' | 'violet' | 'gold' | 'pink'
     cardDisplayMode: "hover",
@@ -10428,11 +10428,11 @@
     }
     if (isGlobalActive) {
       const settings2 = await getSettings();
-      const baseFps = settings2.scanRate || 15;
+      const baseFps = Math.max(1, Math.min(120, settings2.scanRate || 12));
       const effectiveFps = hasActiveQR ? Math.min(4, baseFps) : baseFps;
       const targetInterval = Math.round(1e3 / effectiveFps);
       const elapsed = performance.now() - loopStartTime;
-      const nextDelay = Math.max(10, targetInterval - elapsed);
+      const nextDelay = Math.max(1, targetInterval - elapsed);
       setTimeout(globalCaptureLoop, nextDelay);
     } else {
       isLoopRunning = false;

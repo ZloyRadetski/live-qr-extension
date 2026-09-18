@@ -186,16 +186,23 @@
           </label>
         </div>
 
-        <!-- Scan Rate (Speed Profile) -->
-        <div class="setting-row">
-          <div class="setting-info">
-            <span class="setting-title">Scan Speed</span>
-            <span class="setting-desc">Balance speed vs CPU</span>
+        <!-- Scan Rate (Speed Slider 1-120 FPS) -->
+        <div class="setting-row-block">
+          <div class="setting-header-row">
+            <div class="setting-info">
+              <span class="setting-title">Scan Speed</span>
+              <span class="setting-desc">Frame rate (1 to 120 FPS)</span>
+            </div>
+            <span id="fps-value-badge" class="fps-badge">12 FPS</span>
           </div>
-          <div class="segmented-control" id="fps-selector">
-            <button class="segment-btn" data-fps="5">Eco (5)</button>
-            <button class="segment-btn active" data-fps="12">Normal (12)</button>
-            <button class="segment-btn" data-fps="20">Turbo (20)</button>
+          <div class="slider-wrapper">
+            <input type="range" id="fps-slider" min="1" max="120" value="12" step="1" class="speed-slider">
+            <div class="slider-scale">
+              <span class="scale-mark" data-val="1">1 Eco</span>
+              <span class="scale-mark" data-val="30">30</span>
+              <span class="scale-mark" data-val="60">60 Smooth</span>
+              <span class="scale-mark" data-val="120">120 Ultra</span>
+            </div>
           </div>
         </div>
 

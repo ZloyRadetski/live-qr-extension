@@ -10,7 +10,7 @@ const STORAGE_KEYS = {
 
 export const DEFAULT_SETTINGS = {
   globalActive: false,       // Whether scanner runs globally across all tabs
-  scanRate: 12,              // FPS: 5 (Eco), 12 (Balanced), 20 (Turbo)
+  scanRate: 12,              // FPS: 1 to 120 (Slider, default 12)
   themeColor: 'cyan',        // 'cyan' | 'emerald' | 'violet' | 'gold' | 'pink'
   cardDisplayMode: 'hover',  // 'hover' (expand on hover) | 'always' (always open) | 'compact' (mini pill only)
   glowAnimation: true,       // Pulsing neon glow

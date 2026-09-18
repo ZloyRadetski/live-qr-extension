@@ -26,5 +26,7 @@ test('DEFAULT_SETTINGS contains all customizable fields', () => {
   assert.equal(typeof DEFAULT_SETTINGS.pauseOnScroll, 'boolean');
   assert.equal(typeof DEFAULT_SETTINGS.scanResolution, 'string');
   assert.equal(typeof DEFAULT_SETTINGS.scanDomImages, 'boolean');
+  assert.equal(typeof DEFAULT_SETTINGS.scanRate, 'number');
+  assert.ok(DEFAULT_SETTINGS.scanRate >= 1 && DEFAULT_SETTINGS.scanRate <= 120);
   assert.ok(Array.isArray(DEFAULT_SETTINGS.blacklist));
 });
