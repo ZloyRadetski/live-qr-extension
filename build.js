@@ -52,7 +52,19 @@ async function build() {
   console.log('[Build] Copying overlay CSS...');
   fs.copyFileSync('src/content/overlay.css', 'dist/overlay.css');
 
-  // 5. Bundle Test Bench
+  // 5. Bundle Decoder Worker
+  console.log('[Build] Bundling decoder worker...');
+  await esbuild.build({
+    entryPoints: ['src/background/decoder.worker.js'],
+    bundle: true,
+    outfile: 'dist/decoder.worker.bundle.js',
+    format: 'iife',
+    target: ['firefox109'],
+    sourcemap: false,
+    minify: false
+  });
+
+  // 6. Bundle Test Bench
   console.log('[Build] Bundling test bench...');
   await esbuild.build({
     entryPoints: ['test/test-bench.js'],

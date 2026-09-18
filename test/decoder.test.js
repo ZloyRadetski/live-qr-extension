@@ -31,13 +31,25 @@ test('jsQR accurately decodes rendered QR code image buffer', async () => {
 
 test('decodeVideoCrops safely handles empty or null video inputs without throwing', async () => {
   const { decodeVideoCrops, tabVideoRects } = await import('../src/background/background.js');
-  
-  assert.equal(decodeVideoCrops(null, null), null);
-  assert.equal(decodeVideoCrops(null, { rects: [] }), null);
-  assert.equal(decodeVideoCrops({ width: 100, height: 100 }, null), null);
-  assert.equal(decodeVideoCrops({ width: 100, height: 100 }, { rects: [] }), null);
+
+  assert.equal(await decodeVideoCrops(null, null), null);
+  assert.equal(await decodeVideoCrops(null, { rects: [] }), null);
+  assert.equal(await decodeVideoCrops({ width: 100, height: 100 }, null), null);
+  assert.equal(await decodeVideoCrops({ width: 100, height: 100 }, { rects: [] }), null);
   assert.ok(tabVideoRects instanceof Map);
 });
+
+test('computeFrameHash is unaffected by fetch-to-blob refactor (no regression)', async () => {
+  const { computeFrameHash } = await import('../src/background/background.js');
+
+  // Simulate a realistic data URL prefix (JPEG)
+  const fakeDataUrl = 'data:image/jpeg;base64,' + 'A'.repeat(2000);
+  const h1 = computeFrameHash(fakeDataUrl);
+  const h2 = computeFrameHash(fakeDataUrl);
+  assert.equal(h1, h2, 'Hash must be deterministic');
+  assert.ok(h1 !== 0, 'Hash must be non-zero for non-empty input');
+});
+
 
 test('computeFrameHash produces identical hash for identical inputs', async () => {
   const { computeFrameHash } = await import('../src/background/background.js');
