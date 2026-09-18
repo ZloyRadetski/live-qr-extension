@@ -6,7 +6,7 @@
 import { classifyContent } from '../utils/parser.js';
 import { computeBounds, lerpLocation, areBoundsNear } from '../utils/coordinates.js';
 import { addScanHistory } from '../utils/storage.js';
-import { findAnchorElement, computeAnchorOffset, resolveAnchorPosition } from '../utils/dom-anchor.js';
+import { findAnchorElement, computeAnchorOffset, resolveAnchorPosition, isElementFixed } from '../utils/dom-anchor.js';
 
 /**
  * Individual QR Tracker managing a single on-screen bounding box and HUD card.
@@ -28,14 +28,17 @@ class QRBoxTracker {
     this.anchorOffset = null;
     this.docBounds = null;
     this.isDomLocked = false;
+    this.isFixed = false;
     this.missingFrames = 0;
     this.maxMissingFrames = 8;
     this.lastWidth = 0;
     this.lastHeight = 0;
-    this.lastAnchorRectLeft = null;
-    this.lastAnchorRectTop = null;
-    this.lastAnchorRectWidth = null;
-    this.lastAnchorRectHeight = null;
+    this.lastX = null;
+    this.lastY = null;
+    this.lastDocLeft = null;
+    this.lastDocTop = null;
+    this.lastDocWidth = null;
+    this.lastDocHeight = null;
 
     this.createDom();
   }
@@ -91,26 +94,59 @@ class QRBoxTracker {
     // Smooth location
     this.currentLocation = isDom
       ? targetLoc // direct DOM scan is exact, no lerp lag needed
-      : lerpLocation(this.currentLocation, targetLoc, 0.45);
+      : (this.currentLocation ? lerpLocation(this.currentLocation, targetLoc, 0.45) : targetLoc);
 
     const bounds = computeBounds(this.currentLocation);
 
     // Anchor to DOM element
+    const prevAnchor = this.anchorElement;
     if (!this.anchorElement || !this.anchorElement.isConnected) {
       this.anchorElement = anchorEl || findAnchorElement(bounds.centerX, bounds.centerY);
     }
-    this.anchorOffset = computeAnchorOffset(this.anchorElement, bounds);
+
+    // Calculate anchorOffset ONLY when target anchor is first acquired or changed!
+    // Never re-calculate on every frame because stale screenshot timestamps during scroll will corrupt the offset.
+    if (!this.anchorOffset || this.anchorElement !== prevAnchor) {
+      this.anchorOffset = computeAnchorOffset(this.anchorElement, bounds);
+    }
+
+    // Check if element is inside a fixed container
+    this.isFixed = isElementFixed(this.anchorElement);
+    if (this.isFixed) {
+      this.boxElement.classList.add('qr-fixed-anchor');
+    } else {
+      this.boxElement.classList.remove('qr-fixed-anchor');
+    }
 
     // Document-relative fallback
+    const scrollX = typeof window !== 'undefined' ? (window.pageXOffset || window.scrollX || 0) : 0;
+    const scrollY = typeof window !== 'undefined' ? (window.pageYOffset || window.scrollY || 0) : 0;
+
     this.docBounds = {
-      docX: bounds.minX + window.scrollX,
-      docY: bounds.minY + window.scrollY,
+      docX: bounds.minX + scrollX,
+      docY: bounds.minY + scrollY,
       width: bounds.width,
       height: bounds.height
     };
 
-    // Apply viewport position
-    this.applyPosition(bounds.minX, bounds.minY, bounds.width, bounds.height, true);
+    // Position: If fixed, use viewport coordinates (bounds.minX, bounds.minY).
+    // If document (normal page content), use document coordinates (docX, docY).
+    if (this.anchorElement && this.anchorElement.isConnected && this.anchorOffset) {
+      const pos = resolveAnchorPosition(this.anchorElement, this.anchorOffset);
+      if (pos) {
+        const targetX = this.isFixed ? pos.x : pos.docX;
+        const targetY = this.isFixed ? pos.y : pos.docY;
+        this.applyPosition(targetX, targetY, pos.width, pos.height, pos.isVisible, this.isFixed);
+      } else {
+        const targetX = this.isFixed ? bounds.minX : this.docBounds.docX;
+        const targetY = this.isFixed ? bounds.minY : this.docBounds.docY;
+        this.applyPosition(targetX, targetY, bounds.width, bounds.height, true, this.isFixed);
+      }
+    } else {
+      const targetX = this.isFixed ? bounds.minX : this.docBounds.docX;
+      const targetY = this.isFixed ? bounds.minY : this.docBounds.docY;
+      this.applyPosition(targetX, targetY, bounds.width, bounds.height, true, this.isFixed);
+    }
 
     // Content changed?
     if (text !== this.lastDetectedText) {
@@ -126,7 +162,7 @@ class QRBoxTracker {
   /**
    * Applies position and card orientation using GPU compositor.
    */
-  applyPosition(x, y, width, height, isVisible) {
+  applyPosition(x, y, width, height, isVisible, isFixed = false) {
     if (!this.boxElement) return;
 
     if (!isVisible) {
@@ -137,7 +173,12 @@ class QRBoxTracker {
     this.boxElement.style.visibility = 'visible';
     const rx = Math.round(x * 10) / 10;
     const ry = Math.round(y * 10) / 10;
-    this.boxElement.style.transform = `translate3d(${rx}px, ${ry}px, 0)`;
+
+    if (this.lastX !== rx || this.lastY !== ry) {
+      this.lastX = rx;
+      this.lastY = ry;
+      this.boxElement.style.transform = `translate3d(${rx}px, ${ry}px, 0)`;
+    }
 
     if (width > 0 && this.lastWidth !== width) {
       this.lastWidth = width;
@@ -148,12 +189,22 @@ class QRBoxTracker {
       this.boxElement.style.height = `${Math.round(height)}px`;
     }
 
-    // Flip card if too close to bottom of screen
-    const spaceBelow = window.innerHeight - (y + height);
-    if (spaceBelow < 180) {
-      this.hudCard.classList.add('qr-flipped');
-    } else {
-      this.hudCard.classList.remove('qr-flipped');
+    // Flip HUD card if too close to bottom of screen (using viewport coordinates + hysteresis)
+    const scrollY = typeof window !== 'undefined' ? (window.pageYOffset || window.scrollY || 0) : 0;
+    const viewportY = isFixed ? y : (y - scrollY);
+    const spaceBelow = (typeof window !== 'undefined' ? window.innerHeight : 1080) - (viewportY + (height || 0));
+
+    if (this.hudCard) {
+      const isFlipped = this.hudCard.classList.contains('qr-flipped');
+      if (isFlipped) {
+        if (spaceBelow > 220) {
+          this.hudCard.classList.remove('qr-flipped');
+        }
+      } else {
+        if (spaceBelow < 140) {
+          this.hudCard.classList.add('qr-flipped');
+        }
+      }
     }
   }
 
@@ -168,23 +219,33 @@ class QRBoxTracker {
 
     if (this.anchorElement && this.anchorElement.isConnected && this.anchorOffset) {
       const rect = this.anchorElement.getBoundingClientRect();
+      const scrollX = typeof window !== 'undefined' ? (window.pageXOffset || window.scrollX || 0) : 0;
+      const scrollY = typeof window !== 'undefined' ? (window.pageYOffset || window.scrollY || 0) : 0;
+
+      // For document elements, compare document coordinates (rect.left + scrollX, rect.top + scrollY)
+      // This is CONSTANT during scrolling, so scrolling consumes 0 CPU and doesn't dirty the DOM!
+      const docLeft = this.isFixed ? rect.left : (rect.left + scrollX);
+      const docTop = this.isFixed ? rect.top : (rect.top + scrollY);
+
       if (
-        rect.left === this.lastAnchorRectLeft &&
-        rect.top === this.lastAnchorRectTop &&
-        rect.width === this.lastAnchorRectWidth &&
-        rect.height === this.lastAnchorRectHeight
+        docLeft === this.lastDocLeft &&
+        docTop === this.lastDocTop &&
+        rect.width === this.lastDocWidth &&
+        rect.height === this.lastDocHeight
       ) {
-        return; // Exact same position on screen, 0 CPU cost
+        return; // Exact same position in document, 0 CPU cost
       }
 
-      this.lastAnchorRectLeft = rect.left;
-      this.lastAnchorRectTop = rect.top;
-      this.lastAnchorRectWidth = rect.width;
-      this.lastAnchorRectHeight = rect.height;
+      this.lastDocLeft = docLeft;
+      this.lastDocTop = docTop;
+      this.lastDocWidth = rect.width;
+      this.lastDocHeight = rect.height;
 
       const pos = resolveAnchorPosition(this.anchorElement, this.anchorOffset);
       if (pos) {
-        this.applyPosition(pos.x, pos.y, pos.width, pos.height, pos.isVisible);
+        const targetX = this.isFixed ? pos.x : pos.docX;
+        const targetY = this.isFixed ? pos.y : pos.docY;
+        this.applyPosition(targetX, targetY, pos.width, pos.height, pos.isVisible, this.isFixed);
       }
     }
   }
@@ -197,28 +258,23 @@ class QRBoxTracker {
       return;
     }
 
-    // 1. Primary: Track anchored DOM element in real-time
-    if (this.anchorElement && this.anchorElement.isConnected && this.anchorOffset) {
-      const pos = resolveAnchorPosition(this.anchorElement, this.anchorOffset);
-      if (pos) {
-        this.applyPosition(pos.x, pos.y, pos.width, pos.height, pos.isVisible);
-        return;
+    // Document-positioned boxes move natively with page scrolling (0ms lag, hardware compositor synced).
+    // We only update the card flip orientation if needed.
+    if (this.hudCard && this.lastY !== null) {
+      const scrollY = typeof window !== 'undefined' ? (window.pageYOffset || window.scrollY || 0) : 0;
+      const viewportY = this.isFixed ? this.lastY : (this.lastY - scrollY);
+      const spaceBelow = (typeof window !== 'undefined' ? window.innerHeight : 1080) - (viewportY + (this.lastHeight || 0));
+
+      const isFlipped = this.hudCard.classList.contains('qr-flipped');
+      if (isFlipped) {
+        if (spaceBelow > 220) {
+          this.hudCard.classList.remove('qr-flipped');
+        }
+      } else {
+        if (spaceBelow < 140) {
+          this.hudCard.classList.add('qr-flipped');
+        }
       }
-    }
-
-    // 2. Fallback: Track document coordinates
-    if (this.docBounds) {
-      const currentViewportX = this.docBounds.docX - window.scrollX;
-      const currentViewportY = this.docBounds.docY - window.scrollY;
-
-      const isOut = (
-        currentViewportY + this.docBounds.height < -10 ||
-        currentViewportY > window.innerHeight + 10 ||
-        currentViewportX + this.docBounds.width < -10 ||
-        currentViewportX > window.innerWidth + 10
-      );
-
-      this.applyPosition(currentViewportX, currentViewportY, this.docBounds.width, this.docBounds.height, !isOut);
     }
   }
 
@@ -303,6 +359,7 @@ class QRBoxTracker {
     this.hudCard = null;
     this.miniBadge = null;
     this.anchorElement = null;
+    this.anchorOffset = null;
   }
 }
 
@@ -365,7 +422,10 @@ export class QROverlayManager {
     this.root.id = 'qr-radar-root';
     this.applySettingsClasses();
 
-    document.body.appendChild(this.root);
+    const mountTarget = document.documentElement || document.body;
+    if (mountTarget) {
+      mountTarget.appendChild(this.root);
+    }
   }
 
   /**
@@ -463,6 +523,11 @@ export class QROverlayManager {
    * @param {number} scanHeight
    */
   updateFromScreen(qrResults, scanWidth, scanHeight) {
+    // Drop stale screenshot results if user is actively scrolling
+    if (this.isScrolling) {
+      return;
+    }
+
     if (!qrResults || !Array.isArray(qrResults) || qrResults.length === 0) {
       this.onScreenQrNotFound();
       return;

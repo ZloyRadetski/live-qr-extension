@@ -87,11 +87,33 @@ export function computeAnchorOffset(anchorEl, bounds) {
 }
 
 /**
+ * Checks if an element or any of its ancestors has position: fixed.
+ * @param {HTMLElement} el
+ * @returns {boolean}
+ */
+export function isElementFixed(el) {
+  if (!el || typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') {
+    return false;
+  }
+  let curr = el;
+  while (curr && curr !== document.body && curr !== document.documentElement) {
+    try {
+      const pos = window.getComputedStyle(curr).position;
+      if (pos === 'fixed') return true;
+    } catch {
+      break;
+    }
+    curr = curr.parentElement;
+  }
+  return false;
+}
+
+/**
  * Resolves current viewport position of the anchor.
  * @param {HTMLElement} anchorEl
  * @param {{ offsetX: number, offsetY: number, width: number, height: number, relX?: number, relY?: number, relW?: number, relH?: number, initialWidth?: number }} offset
  * @param {{ innerWidth: number, innerHeight: number }} [viewport]
- * @returns {{ x: number, y: number, width: number, height: number, isVisible: boolean } | null}
+ * @returns {{ x: number, y: number, docX: number, docY: number, width: number, height: number, isVisible: boolean } | null}
  */
 export function resolveAnchorPosition(anchorEl, offset, viewport) {
   if (!anchorEl || (typeof anchorEl.isConnected === 'boolean' && !anchorEl.isConnected)) {
@@ -100,6 +122,8 @@ export function resolveAnchorPosition(anchorEl, offset, viewport) {
 
   const vw = viewport?.innerWidth ?? (typeof window !== 'undefined' ? window.innerWidth : 1920);
   const vh = viewport?.innerHeight ?? (typeof window !== 'undefined' ? window.innerHeight : 1080);
+  const scrollX = typeof window !== 'undefined' ? (window.pageXOffset || window.scrollX || 0) : 0;
+  const scrollY = typeof window !== 'undefined' ? (window.pageYOffset || window.scrollY || 0) : 0;
 
   const rect = anchorEl.getBoundingClientRect();
 
@@ -127,6 +151,8 @@ export function resolveAnchorPosition(anchorEl, offset, viewport) {
   return {
     x,
     y,
+    docX: x + scrollX,
+    docY: y + scrollY,
     width,
     height,
     isVisible

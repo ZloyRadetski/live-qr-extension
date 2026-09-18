@@ -2388,12 +2388,30 @@
       initialHeight
     };
   }
+  function isElementFixed(el) {
+    if (!el || typeof window === "undefined" || typeof window.getComputedStyle !== "function") {
+      return false;
+    }
+    let curr = el;
+    while (curr && curr !== document.body && curr !== document.documentElement) {
+      try {
+        const pos = window.getComputedStyle(curr).position;
+        if (pos === "fixed") return true;
+      } catch {
+        break;
+      }
+      curr = curr.parentElement;
+    }
+    return false;
+  }
   function resolveAnchorPosition(anchorEl, offset, viewport) {
     if (!anchorEl || typeof anchorEl.isConnected === "boolean" && !anchorEl.isConnected) {
       return null;
     }
     const vw = viewport?.innerWidth ?? (typeof window !== "undefined" ? window.innerWidth : 1920);
     const vh = viewport?.innerHeight ?? (typeof window !== "undefined" ? window.innerHeight : 1080);
+    const scrollX = typeof window !== "undefined" ? window.pageXOffset || window.scrollX || 0 : 0;
+    const scrollY = typeof window !== "undefined" ? window.pageYOffset || window.scrollY || 0 : 0;
     const rect = anchorEl.getBoundingClientRect();
     let x, y, width, height;
     if (offset.relX !== void 0 && offset.initialWidth > 0 && Math.abs(rect.width - offset.initialWidth) > 1.5) {
@@ -2411,6 +2429,8 @@
     return {
       x,
       y,
+      docX: x + scrollX,
+      docY: y + scrollY,
       width,
       height,
       isVisible
@@ -2433,14 +2453,17 @@
       this.anchorOffset = null;
       this.docBounds = null;
       this.isDomLocked = false;
+      this.isFixed = false;
       this.missingFrames = 0;
       this.maxMissingFrames = 8;
       this.lastWidth = 0;
       this.lastHeight = 0;
-      this.lastAnchorRectLeft = null;
-      this.lastAnchorRectTop = null;
-      this.lastAnchorRectWidth = null;
-      this.lastAnchorRectHeight = null;
+      this.lastX = null;
+      this.lastY = null;
+      this.lastDocLeft = null;
+      this.lastDocTop = null;
+      this.lastDocWidth = null;
+      this.lastDocHeight = null;
       this.createDom();
     }
     /**
@@ -2483,19 +2506,45 @@
         this.isDomLocked = true;
         if (anchorEl) this.anchorElement = anchorEl;
       }
-      this.currentLocation = isDom ? targetLoc : lerpLocation(this.currentLocation, targetLoc, 0.45);
+      this.currentLocation = isDom ? targetLoc : this.currentLocation ? lerpLocation(this.currentLocation, targetLoc, 0.45) : targetLoc;
       const bounds = computeBounds(this.currentLocation);
+      const prevAnchor = this.anchorElement;
       if (!this.anchorElement || !this.anchorElement.isConnected) {
         this.anchorElement = anchorEl || findAnchorElement(bounds.centerX, bounds.centerY);
       }
-      this.anchorOffset = computeAnchorOffset(this.anchorElement, bounds);
+      if (!this.anchorOffset || this.anchorElement !== prevAnchor) {
+        this.anchorOffset = computeAnchorOffset(this.anchorElement, bounds);
+      }
+      this.isFixed = isElementFixed(this.anchorElement);
+      if (this.isFixed) {
+        this.boxElement.classList.add("qr-fixed-anchor");
+      } else {
+        this.boxElement.classList.remove("qr-fixed-anchor");
+      }
+      const scrollX = typeof window !== "undefined" ? window.pageXOffset || window.scrollX || 0 : 0;
+      const scrollY = typeof window !== "undefined" ? window.pageYOffset || window.scrollY || 0 : 0;
       this.docBounds = {
-        docX: bounds.minX + window.scrollX,
-        docY: bounds.minY + window.scrollY,
+        docX: bounds.minX + scrollX,
+        docY: bounds.minY + scrollY,
         width: bounds.width,
         height: bounds.height
       };
-      this.applyPosition(bounds.minX, bounds.minY, bounds.width, bounds.height, true);
+      if (this.anchorElement && this.anchorElement.isConnected && this.anchorOffset) {
+        const pos = resolveAnchorPosition(this.anchorElement, this.anchorOffset);
+        if (pos) {
+          const targetX = this.isFixed ? pos.x : pos.docX;
+          const targetY = this.isFixed ? pos.y : pos.docY;
+          this.applyPosition(targetX, targetY, pos.width, pos.height, pos.isVisible, this.isFixed);
+        } else {
+          const targetX = this.isFixed ? bounds.minX : this.docBounds.docX;
+          const targetY = this.isFixed ? bounds.minY : this.docBounds.docY;
+          this.applyPosition(targetX, targetY, bounds.width, bounds.height, true, this.isFixed);
+        }
+      } else {
+        const targetX = this.isFixed ? bounds.minX : this.docBounds.docX;
+        const targetY = this.isFixed ? bounds.minY : this.docBounds.docY;
+        this.applyPosition(targetX, targetY, bounds.width, bounds.height, true, this.isFixed);
+      }
       if (text !== this.lastDetectedText) {
         const isInitial = this.lastDetectedText === null;
         this.lastDetectedText = text;
@@ -2508,7 +2557,7 @@
     /**
      * Applies position and card orientation using GPU compositor.
      */
-    applyPosition(x, y, width, height, isVisible) {
+    applyPosition(x, y, width, height, isVisible, isFixed = false) {
       if (!this.boxElement) return;
       if (!isVisible) {
         this.boxElement.style.visibility = "hidden";
@@ -2517,7 +2566,11 @@
       this.boxElement.style.visibility = "visible";
       const rx = Math.round(x * 10) / 10;
       const ry = Math.round(y * 10) / 10;
-      this.boxElement.style.transform = `translate3d(${rx}px, ${ry}px, 0)`;
+      if (this.lastX !== rx || this.lastY !== ry) {
+        this.lastX = rx;
+        this.lastY = ry;
+        this.boxElement.style.transform = `translate3d(${rx}px, ${ry}px, 0)`;
+      }
       if (width > 0 && this.lastWidth !== width) {
         this.lastWidth = width;
         this.boxElement.style.width = `${Math.round(width)}px`;
@@ -2526,11 +2579,20 @@
         this.lastHeight = height;
         this.boxElement.style.height = `${Math.round(height)}px`;
       }
-      const spaceBelow = window.innerHeight - (y + height);
-      if (spaceBelow < 180) {
-        this.hudCard.classList.add("qr-flipped");
-      } else {
-        this.hudCard.classList.remove("qr-flipped");
+      const scrollY = typeof window !== "undefined" ? window.pageYOffset || window.scrollY || 0 : 0;
+      const viewportY = isFixed ? y : y - scrollY;
+      const spaceBelow = (typeof window !== "undefined" ? window.innerHeight : 1080) - (viewportY + (height || 0));
+      if (this.hudCard) {
+        const isFlipped = this.hudCard.classList.contains("qr-flipped");
+        if (isFlipped) {
+          if (spaceBelow > 220) {
+            this.hudCard.classList.remove("qr-flipped");
+          }
+        } else {
+          if (spaceBelow < 140) {
+            this.hudCard.classList.add("qr-flipped");
+          }
+        }
       }
     }
     /**
@@ -2543,16 +2605,22 @@
       }
       if (this.anchorElement && this.anchorElement.isConnected && this.anchorOffset) {
         const rect = this.anchorElement.getBoundingClientRect();
-        if (rect.left === this.lastAnchorRectLeft && rect.top === this.lastAnchorRectTop && rect.width === this.lastAnchorRectWidth && rect.height === this.lastAnchorRectHeight) {
+        const scrollX = typeof window !== "undefined" ? window.pageXOffset || window.scrollX || 0 : 0;
+        const scrollY = typeof window !== "undefined" ? window.pageYOffset || window.scrollY || 0 : 0;
+        const docLeft = this.isFixed ? rect.left : rect.left + scrollX;
+        const docTop = this.isFixed ? rect.top : rect.top + scrollY;
+        if (docLeft === this.lastDocLeft && docTop === this.lastDocTop && rect.width === this.lastDocWidth && rect.height === this.lastDocHeight) {
           return;
         }
-        this.lastAnchorRectLeft = rect.left;
-        this.lastAnchorRectTop = rect.top;
-        this.lastAnchorRectWidth = rect.width;
-        this.lastAnchorRectHeight = rect.height;
+        this.lastDocLeft = docLeft;
+        this.lastDocTop = docTop;
+        this.lastDocWidth = rect.width;
+        this.lastDocHeight = rect.height;
         const pos = resolveAnchorPosition(this.anchorElement, this.anchorOffset);
         if (pos) {
-          this.applyPosition(pos.x, pos.y, pos.width, pos.height, pos.isVisible);
+          const targetX = this.isFixed ? pos.x : pos.docX;
+          const targetY = this.isFixed ? pos.y : pos.docY;
+          this.applyPosition(targetX, targetY, pos.width, pos.height, pos.isVisible, this.isFixed);
         }
       }
     }
@@ -2563,18 +2631,20 @@
       if (!this.boxElement || this.boxElement.classList.contains("qr-hidden")) {
         return;
       }
-      if (this.anchorElement && this.anchorElement.isConnected && this.anchorOffset) {
-        const pos = resolveAnchorPosition(this.anchorElement, this.anchorOffset);
-        if (pos) {
-          this.applyPosition(pos.x, pos.y, pos.width, pos.height, pos.isVisible);
-          return;
+      if (this.hudCard && this.lastY !== null) {
+        const scrollY = typeof window !== "undefined" ? window.pageYOffset || window.scrollY || 0 : 0;
+        const viewportY = this.isFixed ? this.lastY : this.lastY - scrollY;
+        const spaceBelow = (typeof window !== "undefined" ? window.innerHeight : 1080) - (viewportY + (this.lastHeight || 0));
+        const isFlipped = this.hudCard.classList.contains("qr-flipped");
+        if (isFlipped) {
+          if (spaceBelow > 220) {
+            this.hudCard.classList.remove("qr-flipped");
+          }
+        } else {
+          if (spaceBelow < 140) {
+            this.hudCard.classList.add("qr-flipped");
+          }
         }
-      }
-      if (this.docBounds) {
-        const currentViewportX = this.docBounds.docX - window.scrollX;
-        const currentViewportY = this.docBounds.docY - window.scrollY;
-        const isOut = currentViewportY + this.docBounds.height < -10 || currentViewportY > window.innerHeight + 10 || currentViewportX + this.docBounds.width < -10 || currentViewportX > window.innerWidth + 10;
-        this.applyPosition(currentViewportX, currentViewportY, this.docBounds.width, this.docBounds.height, !isOut);
       }
     }
     /**
@@ -2651,6 +2721,7 @@
       this.hudCard = null;
       this.miniBadge = null;
       this.anchorElement = null;
+      this.anchorOffset = null;
     }
   };
   var QROverlayManager = class {
@@ -2707,7 +2778,10 @@
       this.root = document.createElement("div");
       this.root.id = "qr-radar-root";
       this.applySettingsClasses();
-      document.body.appendChild(this.root);
+      const mountTarget = document.documentElement || document.body;
+      if (mountTarget) {
+        mountTarget.appendChild(this.root);
+      }
     }
     /**
      * Synchronizes detected items (from either DOM scanner or Screen capture).
@@ -2778,6 +2852,9 @@
      * @param {number} scanHeight
      */
     updateFromScreen(qrResults, scanWidth, scanHeight) {
+      if (this.isScrolling) {
+        return;
+      }
       if (!qrResults || !Array.isArray(qrResults) || qrResults.length === 0) {
         this.onScreenQrNotFound();
         return;

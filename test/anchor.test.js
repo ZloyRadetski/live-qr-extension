@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { computeAnchorOffset, resolveAnchorPosition } from '../src/utils/dom-anchor.js';
+import { computeAnchorOffset, resolveAnchorPosition, isElementFixed } from '../src/utils/dom-anchor.js';
 
 test('computeAnchorOffset calculates relative coordinates inside element', () => {
   const fakeElement = {
@@ -40,6 +40,8 @@ test('resolveAnchorPosition accurately updates on element movement', () => {
   assert.equal(resolved.x, 350);
   assert.equal(resolved.y, 280);
   assert.equal(resolved.isVisible, true);
+  assert.equal(typeof resolved.docX, 'number');
+  assert.equal(typeof resolved.docY, 'number');
 });
 
 test('resolveAnchorPosition marks elements scrolled out of view as hidden', () => {
@@ -75,4 +77,44 @@ test('resolveAnchorPosition scales proportionally when anchor element resizes', 
   assert.equal(resolved.y, 200);
   assert.equal(resolved.width, 100);
   assert.equal(resolved.height, 100);
+});
+
+test('isElementFixed detects fixed positioning on element or parent hierarchy', () => {
+  // Mock window and getComputedStyle in node
+  global.window = {
+    getComputedStyle: (el) => ({
+      position: el._mockPosition || 'static'
+    })
+  };
+  global.document = {
+    body: {},
+    documentElement: {}
+  };
+
+  const staticEl = { _mockPosition: 'static', parentElement: null };
+  assert.equal(isElementFixed(staticEl), false);
+
+  const fixedEl = { _mockPosition: 'fixed', parentElement: null };
+  assert.equal(isElementFixed(fixedEl), true);
+
+  const childOfFixed = {
+    _mockPosition: 'relative',
+    parentElement: {
+      _mockPosition: 'fixed',
+      parentElement: global.document.body
+    }
+  };
+  assert.equal(isElementFixed(childOfFixed), true);
+
+  const deepStatic = {
+    _mockPosition: 'absolute',
+    parentElement: {
+      _mockPosition: 'relative',
+      parentElement: global.document.body
+    }
+  };
+  assert.equal(isElementFixed(deepStatic), false);
+
+  delete global.window;
+  delete global.document;
 });
