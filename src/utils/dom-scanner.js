@@ -45,6 +45,26 @@ export function scanMediaElement(el, maxDimension = 1200) {
     if (!el.complete || !el.naturalWidth || !el.naturalHeight) return [];
     width = el.naturalWidth;
     height = el.naturalHeight;
+
+    const currentSrc = el.currentSrc || el.src;
+    if (el._qrRadarCached !== undefined && el._qrRadarCachedSrc === currentSrc) {
+      if (!el._qrRadarCached || el._qrRadarCached.length === 0) return [];
+      const rect = el.getBoundingClientRect();
+      const scaleX = rect.width / el._qrRadarCachedW;
+      const scaleY = rect.height / el._qrRadarCachedH;
+      return el._qrRadarCached.map((item) => ({
+        data: item.data,
+        location: {
+          topLeftCorner: { x: rect.left + item.loc.topLeftCorner.x * scaleX, y: rect.top + item.loc.topLeftCorner.y * scaleY },
+          topRightCorner: { x: rect.left + item.loc.topRightCorner.x * scaleX, y: rect.top + item.loc.topRightCorner.y * scaleY },
+          bottomRightCorner: { x: rect.left + item.loc.bottomRightCorner.x * scaleX, y: rect.top + item.loc.bottomRightCorner.y * scaleY },
+          bottomLeftCorner: { x: rect.left + item.loc.bottomLeftCorner.x * scaleX, y: rect.top + item.loc.bottomLeftCorner.y * scaleY }
+        },
+        rect,
+        element: el,
+        isDom: true
+      }));
+    }
   } else if (el.tagName === 'CANVAS') {
     width = el.width;
     height = el.height;
@@ -121,6 +141,22 @@ export function scanMediaElement(el, maxDimension = 1200) {
       // Mask this QR region on the offscreen canvas to detect any additional QRs
       maskQrRegion(ctx, code.location);
       imgData = ctx.getImageData(0, 0, scanW, scanH);
+    }
+
+    if (el.tagName === 'IMG') {
+      const currentSrc = el.currentSrc || el.src;
+      el._qrRadarCachedSrc = currentSrc;
+      el._qrRadarCachedW = scanW;
+      el._qrRadarCachedH = scanH;
+      el._qrRadarCached = found.map((f) => ({
+        data: f.data,
+        loc: {
+          topLeftCorner: { x: (f.location.topLeftCorner.x - f.rect.left) * (scanW / f.rect.width), y: (f.location.topLeftCorner.y - f.rect.top) * (scanH / f.rect.height) },
+          topRightCorner: { x: (f.location.topRightCorner.x - f.rect.left) * (scanW / f.rect.width), y: (f.location.topRightCorner.y - f.rect.top) * (scanH / f.rect.height) },
+          bottomRightCorner: { x: (f.location.bottomRightCorner.x - f.rect.left) * (scanW / f.rect.width), y: (f.location.bottomRightCorner.y - f.rect.top) * (scanH / f.rect.height) },
+          bottomLeftCorner: { x: (f.location.bottomLeftCorner.x - f.rect.left) * (scanW / f.rect.width), y: (f.location.bottomLeftCorner.y - f.rect.top) * (scanH / f.rect.height) }
+        }
+      }));
     }
 
     return found;

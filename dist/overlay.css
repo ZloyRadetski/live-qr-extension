@@ -260,7 +260,21 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 6px;
   margin-bottom: 8px;
+}
+
+.qr-radar-fps-pill {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--qr-accent, #00f0ff);
+  background: rgba(0, 240, 255, 0.12);
+  border: 1px solid rgba(0, 240, 255, 0.25);
+  padding: 1px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+  margin-left: auto;
 }
 
 .qr-radar-type-badge {

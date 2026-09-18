@@ -410,6 +410,13 @@
       } catch {
       }
     }
+    try {
+      await browser.runtime.sendMessage({
+        type: "SETTINGS_UPDATED",
+        settings: newSettings
+      });
+    } catch {
+    }
   }
   async function refreshHistory() {
     const history = await getScanHistory();
@@ -495,13 +502,19 @@
       btn.classList.add("active");
       applySettingChange({ cardDisplayMode: btn.dataset.mode });
     });
+    let fpsDebounceTimer = null;
     if (fpsSlider) {
       fpsSlider.addEventListener("input", (e) => {
         const val = parseInt(e.target.value, 10);
         updateFpsUI(val);
+        clearTimeout(fpsDebounceTimer);
+        fpsDebounceTimer = setTimeout(() => {
+          applySettingChange({ scanRate: val });
+        }, 50);
       });
       fpsSlider.addEventListener("change", (e) => {
         const val = parseInt(e.target.value, 10);
+        clearTimeout(fpsDebounceTimer);
         applySettingChange({ scanRate: val });
       });
     }

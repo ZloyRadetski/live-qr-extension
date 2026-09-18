@@ -10294,6 +10294,7 @@
   var isTabScrolling = false;
   var isWindowFocused = true;
   var hasActiveQR = false;
+  var loopTimer = null;
   var canvas = null;
   var ctx = null;
   var cachedImg = null;
@@ -10429,11 +10430,10 @@
     if (isGlobalActive) {
       const settings2 = await getSettings();
       const baseFps = Math.max(1, Math.min(120, settings2.scanRate || 12));
-      const effectiveFps = hasActiveQR ? Math.min(4, baseFps) : baseFps;
-      const targetInterval = Math.round(1e3 / effectiveFps);
+      const targetInterval = Math.round(1e3 / baseFps);
       const elapsed = performance.now() - loopStartTime;
       const nextDelay = Math.max(1, targetInterval - elapsed);
-      setTimeout(globalCaptureLoop, nextDelay);
+      loopTimer = setTimeout(globalCaptureLoop, nextDelay);
     } else {
       isLoopRunning = false;
     }
@@ -10456,6 +10456,10 @@
   async function stopGlobalScan() {
     isGlobalActive = false;
     hasActiveQR = false;
+    if (loopTimer) {
+      clearTimeout(loopTimer);
+      loopTimer = null;
+    }
     await saveSettings({ globalActive: false });
     updateGlobalBadge(false);
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
@@ -10528,6 +10532,17 @@
             title: parsed.title
           }).catch(() => {
           });
+        }
+        sendResponse({ ok: true });
+        return false;
+      }
+      case "SETTINGS_UPDATED": {
+        if (isGlobalActive) {
+          if (loopTimer) {
+            clearTimeout(loopTimer);
+            loopTimer = null;
+          }
+          globalCaptureLoop();
         }
         sendResponse({ ok: true });
         return false;

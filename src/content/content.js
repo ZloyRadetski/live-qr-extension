@@ -14,6 +14,31 @@ let domObserver = null;
 let domMutationDebounce = null;
 
 /**
+ * Computes interval for in-page DOM scanner from scanRate FPS setting.
+ * @param {number} scanRate 
+ * @returns {number} Interval in milliseconds
+ */
+function getDomScanIntervalMs(scanRate) {
+  const fps = Math.max(1, Math.min(120, scanRate || 12));
+  return Math.max(20, Math.round(1000 / fps));
+}
+
+/**
+ * Resets the in-page DOM scanning interval based on the current FPS setting.
+ * @param {number} scanRate 
+ */
+function updateDomScanRate(scanRate) {
+  if (domScanInterval) {
+    clearInterval(domScanInterval);
+    domScanInterval = null;
+  }
+  if (isMounted) {
+    const intervalMs = getDomScanIntervalMs(scanRate);
+    domScanInterval = setInterval(triggerDomScan, intervalMs);
+  }
+}
+
+/**
  * Scans visible DOM images (<img>, <canvas>) and updates overlay if QR detected.
  */
 async function triggerDomScan() {
@@ -79,6 +104,7 @@ async function initOverlay() {
     cardDisplayMode: settings.cardDisplayMode,
     glowAnimation: settings.glowAnimation,
     cornerBrackets: settings.cornerBrackets,
+    scanRate: settings.scanRate || 12,
     onStopRequested: () => {
       // Notify background to stop capture loop
       try {
@@ -95,9 +121,7 @@ async function initOverlay() {
   if (settings.scanDomImages !== false) {
     setupDomObserver();
     triggerDomScan();
-    if (!domScanInterval) {
-      domScanInterval = setInterval(triggerDomScan, 1400);
-    }
+    updateDomScanRate(settings.scanRate || 12);
   }
 
   return overlay;
@@ -171,14 +195,8 @@ if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.onMessa
         if (overlay && message.settings) {
           overlay.updateSettings(message.settings);
         }
-        if (message.settings && message.settings.scanDomImages !== undefined) {
-          if (message.settings.scanDomImages && isMounted) {
-            setupDomObserver();
-            triggerDomScan();
-            if (!domScanInterval) {
-              domScanInterval = setInterval(triggerDomScan, 1400);
-            }
-          } else {
+        if (message.settings) {
+          if (message.settings.scanDomImages === false) {
             if (domScanInterval) {
               clearInterval(domScanInterval);
               domScanInterval = null;
@@ -187,6 +205,10 @@ if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.onMessa
               domObserver.disconnect();
               domObserver = null;
             }
+          } else if (message.settings.scanDomImages === true || isMounted) {
+            setupDomObserver();
+            triggerDomScan();
+            updateDomScanRate(message.settings.scanRate);
           }
         }
         sendResponse({ success: true });

@@ -17,6 +17,7 @@ let isLoopRunning = false;
 let isTabScrolling = false;
 let isWindowFocused = true;
 let hasActiveQR = false;
+let loopTimer = null;
 
 // Reusable image & canvas buffers to avoid GC pressure
 let canvas = null;
@@ -194,15 +195,12 @@ async function globalCaptureLoop() {
   if (isGlobalActive) {
     const settings = await getSettings();
 
-    // 2. Adaptive rate: If a QR is locked on screen, reduce rate to 4 FPS
-    // (the DOM element anchor already handles 60/120 FPS position updates)
     const baseFps = Math.max(1, Math.min(120, settings.scanRate || 12));
-    const effectiveFps = hasActiveQR ? Math.min(4, baseFps) : baseFps;
-    const targetInterval = Math.round(1000 / effectiveFps);
+    const targetInterval = Math.round(1000 / baseFps);
     const elapsed = performance.now() - loopStartTime;
     const nextDelay = Math.max(1, targetInterval - elapsed);
 
-    setTimeout(globalCaptureLoop, nextDelay);
+    loopTimer = setTimeout(globalCaptureLoop, nextDelay);
   } else {
     isLoopRunning = false;
   }
@@ -234,6 +232,10 @@ async function startGlobalScan() {
 async function stopGlobalScan() {
   isGlobalActive = false;
   hasActiveQR = false;
+  if (loopTimer) {
+    clearTimeout(loopTimer);
+    loopTimer = null;
+  }
   await saveSettings({ globalActive: false });
   updateGlobalBadge(false);
 
@@ -321,6 +323,18 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
           type: parsed.type,
           title: parsed.title
         }).catch(() => {});
+      }
+      sendResponse({ ok: true });
+      return false;
+    }
+
+    case 'SETTINGS_UPDATED': {
+      if (isGlobalActive) {
+        if (loopTimer) {
+          clearTimeout(loopTimer);
+          loopTimer = null;
+        }
+        globalCaptureLoop();
       }
       sendResponse({ ok: true });
       return false;

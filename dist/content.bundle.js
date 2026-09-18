@@ -10542,10 +10542,12 @@
         </a>
       `;
       }
+      const fps = this.options.scanRate || 12;
       this.hudCard.innerHTML = `
       <div class="qr-radar-hud-header">
         <span class="qr-radar-type-badge qr-badge-${parsed.type}">${parsed.type}</span>
         <span style="font-size: 11px; color: #8b949e;">${escapeHtml(parsed.title)}</span>
+        <span class="qr-radar-fps-pill" title="Scan Speed">${fps} FPS</span>
       </div>
       <div class="qr-radar-hud-body">
         ${escapeHtml(parsed.summary)}
@@ -10637,6 +10639,12 @@
     updateSettings(newSettings) {
       this.options = { ...this.options, ...newSettings };
       this.applySettingsClasses();
+      for (const tracker of this.trackers.values()) {
+        tracker.options = { ...tracker.options, ...newSettings };
+        if (tracker.lastDetectedText) {
+          tracker.renderCardContent(tracker.lastDetectedText);
+        }
+      }
     }
     /**
      * Initializes overlay DOM structure.
@@ -10905,6 +10913,25 @@
       if (!el.complete || !el.naturalWidth || !el.naturalHeight) return [];
       width = el.naturalWidth;
       height = el.naturalHeight;
+      const currentSrc = el.currentSrc || el.src;
+      if (el._qrRadarCached !== void 0 && el._qrRadarCachedSrc === currentSrc) {
+        if (!el._qrRadarCached || el._qrRadarCached.length === 0) return [];
+        const rect = el.getBoundingClientRect();
+        const scaleX = rect.width / el._qrRadarCachedW;
+        const scaleY = rect.height / el._qrRadarCachedH;
+        return el._qrRadarCached.map((item) => ({
+          data: item.data,
+          location: {
+            topLeftCorner: { x: rect.left + item.loc.topLeftCorner.x * scaleX, y: rect.top + item.loc.topLeftCorner.y * scaleY },
+            topRightCorner: { x: rect.left + item.loc.topRightCorner.x * scaleX, y: rect.top + item.loc.topRightCorner.y * scaleY },
+            bottomRightCorner: { x: rect.left + item.loc.bottomRightCorner.x * scaleX, y: rect.top + item.loc.bottomRightCorner.y * scaleY },
+            bottomLeftCorner: { x: rect.left + item.loc.bottomLeftCorner.x * scaleX, y: rect.top + item.loc.bottomLeftCorner.y * scaleY }
+          },
+          rect,
+          element: el,
+          isDom: true
+        }));
+      }
     } else if (el.tagName === "CANVAS") {
       width = el.width;
       height = el.height;
@@ -10968,6 +10995,21 @@
         maskQrRegion(ctx, code.location);
         imgData = ctx.getImageData(0, 0, scanW, scanH);
       }
+      if (el.tagName === "IMG") {
+        const currentSrc = el.currentSrc || el.src;
+        el._qrRadarCachedSrc = currentSrc;
+        el._qrRadarCachedW = scanW;
+        el._qrRadarCachedH = scanH;
+        el._qrRadarCached = found.map((f) => ({
+          data: f.data,
+          loc: {
+            topLeftCorner: { x: (f.location.topLeftCorner.x - f.rect.left) * (scanW / f.rect.width), y: (f.location.topLeftCorner.y - f.rect.top) * (scanH / f.rect.height) },
+            topRightCorner: { x: (f.location.topRightCorner.x - f.rect.left) * (scanW / f.rect.width), y: (f.location.topRightCorner.y - f.rect.top) * (scanH / f.rect.height) },
+            bottomRightCorner: { x: (f.location.bottomRightCorner.x - f.rect.left) * (scanW / f.rect.width), y: (f.location.bottomRightCorner.y - f.rect.top) * (scanH / f.rect.height) },
+            bottomLeftCorner: { x: (f.location.bottomLeftCorner.x - f.rect.left) * (scanW / f.rect.width), y: (f.location.bottomLeftCorner.y - f.rect.top) * (scanH / f.rect.height) }
+          }
+        }));
+      }
       return found;
     } catch {
       return [];
@@ -10994,6 +11036,20 @@
   var domScanInterval = null;
   var domObserver = null;
   var domMutationDebounce = null;
+  function getDomScanIntervalMs(scanRate) {
+    const fps = Math.max(1, Math.min(120, scanRate || 12));
+    return Math.max(20, Math.round(1e3 / fps));
+  }
+  function updateDomScanRate(scanRate) {
+    if (domScanInterval) {
+      clearInterval(domScanInterval);
+      domScanInterval = null;
+    }
+    if (isMounted) {
+      const intervalMs = getDomScanIntervalMs(scanRate);
+      domScanInterval = setInterval(triggerDomScan, intervalMs);
+    }
+  }
   async function triggerDomScan() {
     if (!isMounted) return;
     const settings = await getSettings();
@@ -11045,6 +11101,7 @@
       cardDisplayMode: settings.cardDisplayMode,
       glowAnimation: settings.glowAnimation,
       cornerBrackets: settings.cornerBrackets,
+      scanRate: settings.scanRate || 12,
       onStopRequested: () => {
         try {
           browser.runtime.sendMessage({ type: "STOP_SCAN" }).catch(() => {
@@ -11059,9 +11116,7 @@
     if (settings.scanDomImages !== false) {
       setupDomObserver();
       triggerDomScan();
-      if (!domScanInterval) {
-        domScanInterval = setInterval(triggerDomScan, 1400);
-      }
+      updateDomScanRate(settings.scanRate || 12);
     }
     return overlay;
   }
@@ -11121,14 +11176,8 @@
           if (overlay && message.settings) {
             overlay.updateSettings(message.settings);
           }
-          if (message.settings && message.settings.scanDomImages !== void 0) {
-            if (message.settings.scanDomImages && isMounted) {
-              setupDomObserver();
-              triggerDomScan();
-              if (!domScanInterval) {
-                domScanInterval = setInterval(triggerDomScan, 1400);
-              }
-            } else {
+          if (message.settings) {
+            if (message.settings.scanDomImages === false) {
               if (domScanInterval) {
                 clearInterval(domScanInterval);
                 domScanInterval = null;
@@ -11137,6 +11186,10 @@
                 domObserver.disconnect();
                 domObserver = null;
               }
+            } else if (message.settings.scanDomImages === true || isMounted) {
+              setupDomObserver();
+              triggerDomScan();
+              updateDomScanRate(message.settings.scanRate);
             }
           }
           sendResponse({ success: true });

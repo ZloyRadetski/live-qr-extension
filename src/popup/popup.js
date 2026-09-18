@@ -268,6 +268,14 @@ async function applySettingChange(updates) {
       });
     } catch {}
   }
+
+  // Also notify background capture loop to adjust rate or wake up
+  try {
+    await browser.runtime.sendMessage({
+      type: 'SETTINGS_UPDATED',
+      settings: newSettings
+    });
+  } catch {}
 }
 
 /**
@@ -372,14 +380,20 @@ function setupEventListeners() {
   });
 
   // Speed FPS slider (1 to 120 FPS)
+  let fpsDebounceTimer = null;
   if (fpsSlider) {
     fpsSlider.addEventListener('input', (e) => {
       const val = parseInt(e.target.value, 10);
       updateFpsUI(val);
+      clearTimeout(fpsDebounceTimer);
+      fpsDebounceTimer = setTimeout(() => {
+        applySettingChange({ scanRate: val });
+      }, 50);
     });
 
     fpsSlider.addEventListener('change', (e) => {
       const val = parseInt(e.target.value, 10);
+      clearTimeout(fpsDebounceTimer);
       applySettingChange({ scanRate: val });
     });
   }
