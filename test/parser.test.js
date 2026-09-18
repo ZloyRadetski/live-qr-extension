@@ -24,9 +24,9 @@ test('classifyContent - WiFi configurations', () => {
 });
 
 test('classifyContent - Emails', () => {
-  const res1 = classifyContent('mailto:dev@antigravity.ai?subject=Hello');
+  const res1 = classifyContent('mailto:dev@example.com?subject=Hello');
   assert.equal(res1.type, 'email');
-  assert.equal(res1.summary, 'dev@antigravity.ai');
+  assert.equal(res1.summary, 'dev@example.com');
 
   const res2 = classifyContent('simple.user@example.com');
   assert.equal(res2.type, 'email');

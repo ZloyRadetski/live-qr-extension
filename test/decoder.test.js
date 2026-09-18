@@ -5,7 +5,7 @@ import jsQR from 'jsqr';
 import { PNG } from 'pngjs';
 
 test('jsQR accurately decodes rendered QR code image buffer', async () => {
-  const secretPayload = 'https://antigravity.ai/scanner-verify-token-9988';
+  const secretPayload = 'https://github.com/ZloyRadetski/live-qr-extension/scanner-verify-token-9988';
 
   // Render QR to PNG buffer
   const pngBuffer = await QRCode.toBuffer(secretPayload, {

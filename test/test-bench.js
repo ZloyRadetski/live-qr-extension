@@ -37,7 +37,7 @@ async function renderSampleQRs() {
 
   const smallImg = document.getElementById('qr-small-img');
   if (smallImg) {
-    const dataUrl = await QRCode.toDataURL('https://antigravity.ai/tiny-dom-qr-test', {
+    const dataUrl = await QRCode.toDataURL('https://github.com/ZloyRadetski/live-qr-extension/tiny-dom-qr-test', {
       width: 220,
       margin: 2,
       color: { dark: '#000000', light: '#ffffff' }
@@ -83,7 +83,7 @@ async function setupCustomGenerator() {
   if (!input || !btn || !canvas) return;
 
   async function generate() {
-    const text = input.value.trim() || 'https://antigravity.ai';
+    const text = input.value.trim() || 'https://github.com/ZloyRadetski/live-qr-extension';
     await QRCode.toCanvas(canvas, text, {
       width: 200,
       margin: 2,
@@ -107,7 +107,7 @@ async function setupAnimatedCanvas() {
 
   // Generate an offscreen QR image
   const offscreenCanvas = document.createElement('canvas');
-  await QRCode.toCanvas(offscreenCanvas, 'https://antigravity.ai/realtime-radar-moving', {
+  await QRCode.toCanvas(offscreenCanvas, 'https://github.com/ZloyRadetski/live-qr-extension/realtime-radar-moving', {
     width: 140,
     margin: 2
   });
@@ -207,7 +207,7 @@ async function setupBlinkingTest() {
   if (!img || !canvas || !toggleBtn) return;
 
   // Render initial QRs
-  const dataUrl = await QRCode.toDataURL('https://antigravity.ai/blink-test-img', {
+  const dataUrl = await QRCode.toDataURL('https://github.com/ZloyRadetski/live-qr-extension/blink-test-img', {
     width: 200,
     margin: 2,
     color: { dark: '#000000', light: '#ffffff' }
@@ -217,7 +217,7 @@ async function setupBlinkingTest() {
   const offscreen = document.createElement('canvas');
   offscreen.width = 150;
   offscreen.height = 150;
-  await QRCode.toCanvas(offscreen, 'https://antigravity.ai/blink-test-canvas', {
+  await QRCode.toCanvas(offscreen, 'https://github.com/ZloyRadetski/live-qr-extension/blink-test-canvas', {
     width: 150,
     margin: 2,
     color: { dark: '#031326', light: '#ffffff' }
@@ -351,7 +351,7 @@ async function setupVideoStreamTest() {
   const qrCanvas = document.createElement('canvas');
   qrCanvas.width = 160;
   qrCanvas.height = 160;
-  await QRCode.toCanvas(qrCanvas, 'https://antigravity.ai/live-video-stream-qr', {
+  await QRCode.toCanvas(qrCanvas, 'https://github.com/ZloyRadetski/live-qr-extension/live-video-stream-qr', {
     width: 160,
     margin: 2,
     color: { dark: '#031326', light: '#ffffff' }
