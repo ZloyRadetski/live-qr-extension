@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isElementInViewport, scanMediaElement } from '../src/utils/dom-scanner.js';
+import { isElementInViewport, scanMediaElement, scanVisibleDomImages } from '../src/utils/dom-scanner.js';
 
 test('isElementInViewport accurately detects visible vs hidden elements', () => {
   const visibleEl = {
@@ -43,11 +43,17 @@ test('isElementInViewport accurately detects visible vs hidden elements', () => 
 
 test('scanMediaElement safely rejects invalid, incomplete, or tiny images', () => {
   // Incomplete image
-  assert.equal(scanMediaElement({ tagName: 'IMG', complete: false }), null);
+  assert.deepEqual(scanMediaElement({ tagName: 'IMG', complete: false }), []);
 
   // Tiny image (< 20px)
-  assert.equal(scanMediaElement({ tagName: 'IMG', complete: true, naturalWidth: 10, naturalHeight: 10 }), null);
+  assert.deepEqual(scanMediaElement({ tagName: 'IMG', complete: true, naturalWidth: 10, naturalHeight: 10 }), []);
 
   // Non-media tag
-  assert.equal(scanMediaElement({ tagName: 'DIV' }), null);
+  assert.deepEqual(scanMediaElement({ tagName: 'DIV' }), []);
 });
+
+test('scanVisibleDomImages safely returns empty array in non-browser environment', () => {
+  const res = scanVisibleDomImages();
+  assert.deepEqual(res, []);
+});
+

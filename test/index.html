@@ -272,11 +272,36 @@
         </div>
         <div class="meta-tag">https://antigravity.ai/tiny-dom-qr-test</div>
       </div>
+
+      <!-- Simultaneous Multi-QR Test -->
+      <div class="card" style="grid-column: 1 / -1; width: 100%;">
+        <h2>6. Multi-QR Simultaneous Tracking Test (3 QRs in one view)</h2>
+        <p style="color: var(--text-dim); font-size: 13px; margin-bottom: 12px;">
+          Tests simultaneous detection, alignment, and deduplication when multiple QR codes appear on screen at once.
+        </p>
+        <div style="display: flex; justify-content: space-around; width: 100%; flex-wrap: wrap; gap: 20px;">
+          <div style="display: flex; flex-direction: column; align-items: center; gap: 6px;">
+            <span style="font-size: 12px; color: var(--text-dim);">Image A (Link)</span>
+            <img id="multi-qr-1" class="qr-box" style="width: 140px; height: 140px;" alt="Multi QR 1">
+            <span style="font-size: 11px; color: #8b949e;">https://github.com</span>
+          </div>
+          <div style="display: flex; flex-direction: column; align-items: center; gap: 6px;">
+            <span style="font-size: 12px; color: var(--text-dim);">Canvas B (Email)</span>
+            <canvas id="multi-qr-2" class="qr-box"></canvas>
+            <span style="font-size: 11px; color: #8b949e;">mailto:test@radar.io</span>
+          </div>
+          <div style="display: flex; flex-direction: column; align-items: center; gap: 6px;">
+            <span style="font-size: 12px; color: var(--text-dim);">Image C (SMS)</span>
+            <img id="multi-qr-3" class="qr-box" style="width: 140px; height: 140px;" alt="Multi QR 3">
+            <span style="font-size: 11px; color: #8b949e;">smsto:+123456789</span>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Moving & Rotating Target Test -->
     <div class="card" style="align-items: center; width: 100%;">
-      <h2>5. Dynamic Tracking Test (Smooth Motion & Rotation)</h2>
+      <h2>7. Dynamic Tracking Test (Smooth Motion & Rotation)</h2>
       <p style="color: var(--text-dim); font-size: 13px; margin-bottom: 8px;">
         Simulates moving video or dynamic elements on screen. The scanner continuously tracks position and rotation.
       </p>

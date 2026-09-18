@@ -8,7 +8,9 @@ import {
   lerpPoint,
   lerpLocation,
   distance,
-  computeRotationAngle
+  computeRotationAngle,
+  areBoundsNear,
+  maskQrRegion
 } from '../src/utils/coordinates.js';
 
 test('projectPoint scales coordinates correctly', () => {
@@ -86,4 +88,42 @@ test('computeRotationAngle calculates horizontal orientation angle', () => {
   const pVertical = { x: 0, y: 100 };
   const angle90 = computeRotationAngle(p1, pVertical);
   assert.equal(angle90, 90);
+});
+
+test('areBoundsNear correctly evaluates spatial proximity', () => {
+  const b1 = { centerX: 100, centerY: 100 };
+  const b2 = { centerX: 120, centerY: 110 }; // distance = sqrt(400+100) = ~22.3
+  const bFar = { centerX: 300, centerY: 300 };
+
+  assert.equal(areBoundsNear(b1, b2, 50), true);
+  assert.equal(areBoundsNear(b1, bFar, 50), false);
+  assert.equal(areBoundsNear(null, b2), false);
+});
+
+test('maskQrRegion safely executes canvas operations', () => {
+  let fillCalled = false;
+  const mockCtx = {
+    save: () => {},
+    restore: () => {},
+    beginPath: () => {},
+    closePath: () => {},
+    moveTo: () => {},
+    lineTo: () => {},
+    fill: () => { fillCalled = true; },
+    fillStyle: ''
+  };
+
+  const loc = {
+    topLeftCorner: { x: 10, y: 10 },
+    topRightCorner: { x: 50, y: 10 },
+    bottomRightCorner: { x: 50, y: 50 },
+    bottomLeftCorner: { x: 10, y: 50 }
+  };
+
+  maskQrRegion(mockCtx, loc);
+  assert.equal(fillCalled, true);
+  assert.equal(mockCtx.fillStyle, '#ffffff');
+
+  // Gracefully handles nulls
+  assert.doesNotThrow(() => maskQrRegion(null, null));
 });

@@ -163,3 +163,42 @@ export function computeRotationAngle(topLeft, topRight) {
   const radians = Math.atan2(topRight.y - topLeft.y, topRight.x - topLeft.x);
   return (radians * 180) / Math.PI;
 }
+
+/**
+ * Masks a QR code polygon on a 2D canvas context with solid color
+ * so single-barcode decoders can search for remaining QR codes.
+ * @param {any} ctx - 2D Canvas context
+ * @param {QRLocation} location
+ * @param {number} [margin=4]
+ * @param {string} [fillColor='#ffffff']
+ */
+export function maskQrRegion(ctx, location, margin = 4, fillColor = '#ffffff') {
+  if (!ctx || !location) return;
+  const { topLeftCorner: tl, topRightCorner: tr, bottomRightCorner: br, bottomLeftCorner: bl } = location;
+  if (!tl || !tr || !br || !bl) return;
+
+  ctx.save();
+  ctx.fillStyle = fillColor;
+  ctx.beginPath();
+  ctx.moveTo(tl.x - margin, tl.y - margin);
+  ctx.lineTo(tr.x + margin, tr.y - margin);
+  ctx.lineTo(br.x + margin, br.y + margin);
+  ctx.lineTo(bl.x - margin, bl.y + margin);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+/**
+ * Checks if two bounding boxes are spatially close / overlapping.
+ * @param {{ centerX: number, centerY: number }} b1
+ * @param {{ centerX: number, centerY: number }} b2
+ * @param {number} [maxDistance=60]
+ * @returns {boolean}
+ */
+export function areBoundsNear(b1, b2, maxDistance = 60) {
+  if (!b1 || !b2) return false;
+  const dx = b1.centerX - b2.centerX;
+  const dy = b1.centerY - b2.centerY;
+  return (dx * dx + dy * dy) <= (maxDistance * maxDistance);
+}

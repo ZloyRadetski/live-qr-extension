@@ -4,75 +4,45 @@
  */
 
 import { classifyContent } from '../utils/parser.js';
-import { computeBounds, lerpLocation } from '../utils/coordinates.js';
+import { computeBounds, lerpLocation, areBoundsNear } from '../utils/coordinates.js';
 import { addScanHistory } from '../utils/storage.js';
 import { findAnchorElement, computeAnchorOffset, resolveAnchorPosition } from '../utils/dom-anchor.js';
 
-export class QROverlayManager {
-  constructor(options = {}) {
-    this.options = {
-      soundEnabled: true,
-      autoCopy: false,
-      themeColor: 'cyan',
-      cardDisplayMode: 'hover',
-      glowAnimation: true,
-      cornerBrackets: true,
-      onStopRequested: () => {},
-      ...options
-    };
+/**
+ * Individual QR Tracker managing a single on-screen bounding box and HUD card.
+ */
+class QRBoxTracker {
+  constructor(id, root, options, callbacks = {}) {
+    this.id = id;
+    this.root = root;
+    this.options = options;
+    this.callbacks = callbacks;
 
-    this.root = null;
     this.boxElement = null;
     this.hudCard = null;
     this.miniBadge = null;
 
     this.currentLocation = null;
     this.lastDetectedText = null;
-    this.docBounds = null;
     this.anchorElement = null;
     this.anchorOffset = null;
-    this.isScrolling = false;
-    this.scrollTimer = null;
-    this.missingFrames = 0;
-    this.maxMissingFrames = 8; // Fade out after ~8 missing frames
+    this.docBounds = null;
     this.isDomLocked = false;
-    this.audioCtx = null;
+    this.missingFrames = 0;
+    this.maxMissingFrames = 8;
+    this.lastWidth = 0;
+    this.lastHeight = 0;
+
+    this.createDom();
   }
 
   /**
-   * Applies CSS classes for themes, display mode, and animations.
+   * Builds the DOM elements for this box.
    */
-  applySettingsClasses() {
-    if (!this.root) return;
-    this.root.className = [
-      `theme-${this.options.themeColor || 'cyan'}`,
-      `mode-${this.options.cardDisplayMode || 'hover'}`,
-      this.options.glowAnimation === false ? 'no-glow' : '',
-      this.options.cornerBrackets === false ? 'no-brackets' : ''
-    ].filter(Boolean).join(' ');
-  }
-
-  /**
-   * Updates customizable options dynamically.
-   */
-  updateSettings(newSettings) {
-    this.options = { ...this.options, ...newSettings };
-    this.applySettingsClasses();
-  }
-
-  /**
-   * Initializes overlay DOM structure.
-   */
-  mount() {
-    if (this.root) return;
-
-    this.root = document.createElement('div');
-    this.root.id = 'qr-radar-root';
-    this.applySettingsClasses();
-
-    // Bounding Box & Corners
+  createDom() {
     this.boxElement = document.createElement('div');
     this.boxElement.className = 'qr-radar-box qr-hidden';
+    this.boxElement.dataset.trackerId = this.id;
     this.boxElement.innerHTML = `
       <div class="qr-radar-box-frame">
         <div class="qr-radar-corner qr-radar-corner-tl"></div>
@@ -94,83 +64,36 @@ export class QROverlayManager {
     this.boxElement.appendChild(this.hudCard);
 
     this.root.appendChild(this.boxElement);
-    document.body.appendChild(this.root);
   }
 
   /**
-   * Updates HUD with newly detected QR code.
-   * @param {{ location: any, data: string }} qrResult
-   * @param {number} [scaleX=1]
-   * @param {number} [scaleY=1]
-   * @param {HTMLElement} [knownAnchor=null]
+   * Updates tracker position and content.
+   * @param {any} targetLoc
+   * @param {string} text
+   * @param {HTMLElement} [anchorEl=null]
+   * @param {boolean} [isDom=false]
    */
-  update(qrResult, scaleX = 1, scaleY = 1, knownAnchor = null) {
-    if (!this.root) this.mount();
-
-    if (!qrResult) {
-      // If we have an active DOM lock and element is still connected & in viewport, preserve HUD
-      if (this.isDomLocked && this.anchorElement && this.anchorElement.isConnected) {
-        const rect = this.anchorElement.getBoundingClientRect();
-        const inViewport = (
-          rect.bottom >= 0 &&
-          rect.top <= window.innerHeight &&
-          rect.right >= 0 &&
-          rect.left <= window.innerWidth &&
-          rect.width > 12 &&
-          rect.height > 12
-        );
-        if (inViewport) {
-          return;
-        }
-      }
-
-      this.missingFrames++;
-      if (this.missingFrames > this.maxMissingFrames) {
-        this.boxElement.classList.add('qr-hidden');
-        this.currentLocation = null;
-        this.anchorElement = null;
-        this.anchorOffset = null;
-        this.docBounds = null;
-        this.isDomLocked = false;
-      }
-      return;
-    }
+  update(targetLoc, text, anchorEl = null, isDom = false) {
+    if (!this.boxElement) return;
 
     this.missingFrames = 0;
     this.boxElement.classList.remove('qr-hidden');
 
-    if (knownAnchor) {
+    if (isDom) {
       this.isDomLocked = true;
-      this.anchorElement = knownAnchor;
+      if (anchorEl) this.anchorElement = anchorEl;
     }
-
-    // If user is actively scrolling, do not let delayed screenshot coordinates jerk the box
-    if (this.isScrolling) {
-      const text = qrResult.data;
-      if (text !== this.lastDetectedText) {
-        this.lastDetectedText = text;
-        this.renderCardContent(text);
-        this.onNewQRAcquired(text);
-      }
-      return;
-    }
-
-    // Scale location points
-    const rawLoc = qrResult.location;
-    const targetLoc = {
-      topLeftCorner: { x: rawLoc.topLeftCorner.x * scaleX, y: rawLoc.topLeftCorner.y * scaleY },
-      topRightCorner: { x: rawLoc.topRightCorner.x * scaleX, y: rawLoc.topRightCorner.y * scaleY },
-      bottomRightCorner: { x: rawLoc.bottomRightCorner.x * scaleX, y: rawLoc.bottomRightCorner.y * scaleY },
-      bottomLeftCorner: { x: rawLoc.bottomLeftCorner.x * scaleX, y: rawLoc.bottomLeftCorner.y * scaleY }
-    };
 
     // Smooth location
-    this.currentLocation = lerpLocation(this.currentLocation, targetLoc, 0.45);
+    this.currentLocation = isDom
+      ? targetLoc // direct DOM scan is exact, no lerp lag needed
+      : lerpLocation(this.currentLocation, targetLoc, 0.45);
+
     const bounds = computeBounds(this.currentLocation);
 
-    // Anchor to the real DOM element under the QR code (IMG, VIDEO, CANVAS, etc.)
+    // Anchor to DOM element
     if (!this.anchorElement || !this.anchorElement.isConnected) {
-      this.anchorElement = findAnchorElement(bounds.centerX, bounds.centerY);
+      this.anchorElement = anchorEl || findAnchorElement(bounds.centerX, bounds.centerY);
     }
     this.anchorOffset = computeAnchorOffset(this.anchorElement, bounds);
 
@@ -185,12 +108,14 @@ export class QROverlayManager {
     // Apply viewport position
     this.applyPosition(bounds.minX, bounds.minY, bounds.width, bounds.height, true);
 
-    // New QR detected or changed?
-    const text = qrResult.data;
+    // Content changed?
     if (text !== this.lastDetectedText) {
+      const isInitial = this.lastDetectedText === null;
       this.lastDetectedText = text;
       this.renderCardContent(text);
-      this.onNewQRAcquired(text);
+      if (isInitial && this.callbacks.onNew) {
+        this.callbacks.onNew(text);
+      }
     }
   }
 
@@ -206,10 +131,8 @@ export class QROverlayManager {
     }
 
     this.boxElement.style.visibility = 'visible';
-    // GPU-accelerated translate3d bypasses layout reflow and repaints
     this.boxElement.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0)`;
 
-    // Only update dimensions if changed
     if (width > 0 && this.lastWidth !== width) {
       this.lastWidth = width;
       this.boxElement.style.width = `${Math.round(width)}px`;
@@ -229,20 +152,12 @@ export class QROverlayManager {
   }
 
   /**
-   * Instantly compensates bounding box position on page scroll (60/120 FPS)
-   * using real-time DOM element bounding rect.
+   * Scroll compensation for this box.
    */
   onScroll() {
     if (!this.boxElement || this.boxElement.classList.contains('qr-hidden')) {
       return;
     }
-
-    // Freeze background snapshot overwrites during active scroll
-    this.isScrolling = true;
-    if (this.scrollTimer) clearTimeout(this.scrollTimer);
-    this.scrollTimer = setTimeout(() => {
-      this.isScrolling = false;
-    }, 130);
 
     // 1. Primary: Track anchored DOM element in real-time
     if (this.anchorElement && this.anchorElement.isConnected && this.anchorOffset) {
@@ -315,7 +230,9 @@ export class QROverlayManager {
     if (copyBtn) {
       copyBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        this.copyToClipboard(text, copyBtn);
+        if (this.callbacks.copy) {
+          this.callbacks.copy(text, copyBtn);
+        }
       });
     }
 
@@ -338,7 +255,268 @@ export class QROverlayManager {
   }
 
   /**
-   * Triggered when a new QR code is detected.
+   * Destroys tracker DOM element.
+   */
+  destroy() {
+    if (this.boxElement && this.boxElement.parentNode) {
+      this.boxElement.parentNode.removeChild(this.boxElement);
+    }
+    this.boxElement = null;
+    this.hudCard = null;
+    this.miniBadge = null;
+    this.anchorElement = null;
+  }
+}
+
+export class QROverlayManager {
+  constructor(options = {}) {
+    this.options = {
+      soundEnabled: true,
+      autoCopy: false,
+      themeColor: 'cyan',
+      cardDisplayMode: 'hover',
+      glowAnimation: true,
+      cornerBrackets: true,
+      onStopRequested: () => {},
+      ...options
+    };
+
+    this.root = null;
+    this.trackers = new Map(); // id -> QRBoxTracker
+    this.isScrolling = false;
+    this.scrollTimer = null;
+    this.audioCtx = null;
+    this.lastChimeTime = 0;
+  }
+
+  /**
+   * Applies CSS classes for themes, display mode, and animations to root overlay.
+   */
+  applySettingsClasses() {
+    if (!this.root) return;
+    this.root.className = [
+      `theme-${this.options.themeColor || 'cyan'}`,
+      `mode-${this.options.cardDisplayMode || 'hover'}`,
+      this.options.glowAnimation === false ? 'no-glow' : '',
+      this.options.cornerBrackets === false ? 'no-brackets' : ''
+    ].filter(Boolean).join(' ');
+  }
+
+  /**
+   * Updates customizable options dynamically.
+   */
+  updateSettings(newSettings) {
+    this.options = { ...this.options, ...newSettings };
+    this.applySettingsClasses();
+  }
+
+  /**
+   * Initializes overlay DOM structure.
+   */
+  mount() {
+    if (this.root) return;
+
+    this.root = document.createElement('div');
+    this.root.id = 'qr-radar-root';
+    this.applySettingsClasses();
+
+    document.body.appendChild(this.root);
+  }
+
+  /**
+   * Synchronizes detected items (from either DOM scanner or Screen capture).
+   * Smart deduplication: keeps DOM anchor priority, prevents live & DOM fight.
+   * @param {Array<{ data: string, location: any, element?: HTMLElement, isDom?: boolean }>} items
+   * @param {'dom' | 'screen'} source
+   */
+  syncTrackers(items, source) {
+    if (!this.root) this.mount();
+
+    const matchedTrackerIds = new Set();
+
+    for (const item of items) {
+      if (!item || !item.data || !item.location) continue;
+
+      const itemBounds = computeBounds(item.location);
+      let matchedTracker = null;
+
+      // Find matching tracker by data or spatial overlap
+      for (const tracker of this.trackers.values()) {
+        const isSameText = tracker.lastDetectedText === item.data;
+        const trackerBounds = tracker.currentLocation ? computeBounds(tracker.currentLocation) : null;
+        const isNear = trackerBounds && areBoundsNear(trackerBounds, itemBounds, 90);
+
+        if (isSameText || isNear) {
+          matchedTracker = tracker;
+          break;
+        }
+      }
+
+      if (matchedTracker) {
+        matchedTrackerIds.add(matchedTracker.id);
+
+        // Deduplication rule: If tracker is already DOM-anchored, and incoming is screen capture,
+        // PRESERVE the exact DOM anchor! Do not let downsampled screenshot jerk it.
+        if (matchedTracker.isDomLocked && source === 'screen') {
+          matchedTracker.missingFrames = 0;
+        } else {
+          matchedTracker.update(item.location, item.data, item.element || null, source === 'dom');
+        }
+      } else {
+        // Create new tracker
+        const trackerId = `qr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        const tracker = new QRBoxTracker(trackerId, this.root, this.options, {
+          onNew: (text) => this.onNewQRAcquired(text),
+          copy: (text, btn) => this.copyToClipboard(text, btn)
+        });
+
+        tracker.update(item.location, item.data, item.element || null, source === 'dom');
+        this.trackers.set(trackerId, tracker);
+        matchedTrackerIds.add(trackerId);
+      }
+    }
+
+    // Clean up trackers not seen in this update
+    for (const [id, tracker] of this.trackers.entries()) {
+      if (!matchedTrackerIds.has(id)) {
+        // If tracker is DOM locked, check if its DOM element is still visible on page
+        if (tracker.isDomLocked && tracker.anchorElement && tracker.anchorElement.isConnected) {
+          const rect = tracker.anchorElement.getBoundingClientRect();
+          const inView = (
+            rect.bottom >= 0 &&
+            rect.top <= window.innerHeight &&
+            rect.right >= 0 &&
+            rect.left <= window.innerWidth &&
+            rect.width > 12 &&
+            rect.height > 12
+          );
+          if (inView && source === 'screen') {
+            // Background screen capture didn't see the tiny DOM image; keep it!
+            continue;
+          }
+        }
+
+        tracker.missingFrames++;
+        if (tracker.missingFrames > tracker.maxMissingFrames) {
+          tracker.destroy();
+          this.trackers.delete(id);
+        }
+      }
+    }
+  }
+
+  /**
+   * Updates from full screen screenshot capture.
+   * @param {any[]} qrResults
+   * @param {number} scanWidth
+   * @param {number} scanHeight
+   */
+  updateFromScreen(qrResults, scanWidth, scanHeight) {
+    if (!qrResults || !Array.isArray(qrResults) || qrResults.length === 0) {
+      this.onScreenQrNotFound();
+      return;
+    }
+
+    const scaleX = window.innerWidth / scanWidth;
+    const scaleY = window.innerHeight / scanHeight;
+
+    const items = qrResults.map((qr) => {
+      const rawLoc = qr.location;
+      const location = {
+        topLeftCorner: { x: rawLoc.topLeftCorner.x * scaleX, y: rawLoc.topLeftCorner.y * scaleY },
+        topRightCorner: { x: rawLoc.topRightCorner.x * scaleX, y: rawLoc.topRightCorner.y * scaleY },
+        bottomRightCorner: { x: rawLoc.bottomRightCorner.x * scaleX, y: rawLoc.bottomRightCorner.y * scaleY },
+        bottomLeftCorner: { x: rawLoc.bottomLeftCorner.x * scaleX, y: rawLoc.bottomLeftCorner.y * scaleY }
+      };
+
+      return {
+        data: qr.data,
+        location,
+        isDom: false
+      };
+    });
+
+    this.syncTrackers(items, 'screen');
+  }
+
+  /**
+   * Updates from in-page DOM image scanning.
+   * @param {Array<{ data: string, location: any, element: HTMLElement }>} domResults
+   */
+  updateFromDom(domResults) {
+    if (!domResults || !Array.isArray(domResults)) return;
+    this.syncTrackers(domResults, 'dom');
+  }
+
+  /**
+   * Called when screen capture found 0 QR codes.
+   * Does NOT wipe DOM-anchored images that are still visible!
+   */
+  onScreenQrNotFound() {
+    for (const [id, tracker] of this.trackers.entries()) {
+      if (tracker.isDomLocked && tracker.anchorElement && tracker.anchorElement.isConnected) {
+        const rect = tracker.anchorElement.getBoundingClientRect();
+        const inView = (
+          rect.bottom >= 0 &&
+          rect.top <= window.innerHeight &&
+          rect.right >= 0 &&
+          rect.left <= window.innerWidth
+        );
+        if (inView) continue;
+      }
+
+      tracker.missingFrames++;
+      if (tracker.missingFrames > tracker.maxMissingFrames) {
+        tracker.destroy();
+        this.trackers.delete(id);
+      }
+    }
+  }
+
+  /**
+   * Legacy single-QR update bridge.
+   * @param {any} qrResult
+   * @param {number} [scaleX=1]
+   * @param {number} [scaleY=1]
+   * @param {HTMLElement} [knownAnchor=null]
+   */
+  update(qrResult, scaleX = 1, scaleY = 1, knownAnchor = null) {
+    if (!qrResult) {
+      this.onScreenQrNotFound();
+      return;
+    }
+
+    if (knownAnchor) {
+      this.updateFromDom([{
+        data: qrResult.data,
+        location: qrResult.location,
+        element: knownAnchor,
+        isDom: true
+      }]);
+    } else {
+      const scanWidth = window.innerWidth / scaleX;
+      const scanHeight = window.innerHeight / scaleY;
+      this.updateFromScreen([qrResult], scanWidth, scanHeight);
+    }
+  }
+
+  /**
+   * 60/120 FPS Real-time scroll compensation across all active trackers.
+   */
+  onScroll() {
+    this.isScrolling = true;
+    if (this.scrollTimer) clearTimeout(this.scrollTimer);
+    this.scrollTimer = setTimeout(() => {
+      this.isScrolling = false;
+    }, 130);
+
+    for (const tracker of this.trackers.values()) {
+      tracker.onScroll();
+    }
+  }
+
+  /**
+   * Triggered when a new QR code is acquired.
    * @param {string} text
    */
   onNewQRAcquired(text) {
@@ -351,8 +529,10 @@ export class QROverlayManager {
       title: parsed.title
     }).catch(() => {});
 
-    // Sound chime
-    if (this.options.soundEnabled) {
+    // Sound chime (debounced to avoid multiple loud chimes)
+    const now = Date.now();
+    if (this.options.soundEnabled && (now - this.lastChimeTime > 250)) {
+      this.lastChimeTime = now;
       this.playChime();
     }
 
@@ -416,25 +596,23 @@ export class QROverlayManager {
   }
 
   /**
-   * Unmounts overlay and cleans up DOM.
+   * Unmounts overlay and cleans up all trackers.
    */
   unmount() {
     if (this.scrollTimer) {
       clearTimeout(this.scrollTimer);
       this.scrollTimer = null;
     }
+
+    for (const tracker of this.trackers.values()) {
+      tracker.destroy();
+    }
+    this.trackers.clear();
+
     if (this.root && this.root.parentNode) {
       this.root.parentNode.removeChild(this.root);
     }
     this.root = null;
-    this.boxElement = null;
-    this.hudCard = null;
-    this.miniBadge = null;
-    this.currentLocation = null;
-    this.lastDetectedText = null;
-    this.anchorElement = null;
-    this.anchorOffset = null;
-    this.docBounds = null;
     this.isScrolling = false;
   }
 }

@@ -21,21 +21,23 @@ async function triggerDomScan() {
   const settings = await getSettings();
   if (settings.scanDomImages === false) return;
 
-  const result = scanVisibleDomImages();
-  if (result && result.code) {
+  const results = scanVisibleDomImages();
+  if (Array.isArray(results) && results.length > 0) {
     if (!overlay) {
       await initOverlay();
     }
     if (overlay) {
-      overlay.update(result.code, 1, 1, result.element);
+      overlay.updateFromDom(results);
     }
-    // Notify background service
-    try {
-      browser.runtime.sendMessage({
-        type: 'DOM_QR_DETECTED',
-        qrData: result.data
-      }).catch(() => {});
-    } catch {}
+    // Notify background service of each detected QR
+    for (const res of results) {
+      try {
+        browser.runtime.sendMessage({
+          type: 'DOM_QR_DETECTED',
+          qrData: res.data
+        }).catch(() => {});
+      } catch {}
+    }
   }
 }
 
@@ -145,16 +147,13 @@ if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.onMessa
       }
 
       case 'QR_DETECTED': {
+        const qrs = message.qrResults || (message.qrResult ? [message.qrResult] : []);
         if (!overlay) {
           initOverlay().then((ov) => {
-            const scaleX = window.innerWidth / message.scanWidth;
-            const scaleY = window.innerHeight / message.scanHeight;
-            ov.update(message.qrResult, scaleX, scaleY);
+            ov.updateFromScreen(qrs, message.scanWidth, message.scanHeight);
           });
         } else {
-          const scaleX = window.innerWidth / message.scanWidth;
-          const scaleY = window.innerHeight / message.scanHeight;
-          overlay.update(message.qrResult, scaleX, scaleY);
+          overlay.updateFromScreen(qrs, message.scanWidth, message.scanHeight);
         }
         sendResponse({ received: true });
         return false;
@@ -162,7 +161,7 @@ if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.onMessa
 
       case 'QR_NOT_FOUND': {
         if (overlay) {
-          overlay.update(null);
+          overlay.onScreenQrNotFound();
         }
         sendResponse({ received: true });
         return false;

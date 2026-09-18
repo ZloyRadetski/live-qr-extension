@@ -5,6 +5,7 @@
  */
 
 import jsQR from 'jsqr';
+import { maskQrRegion } from './coordinates.js';
 
 /**
  * Checks whether an element is roughly within the visible browser viewport.
@@ -29,30 +30,30 @@ export function isElementInViewport(el, margin = 50) {
 }
 
 /**
- * Scans an individual <img> or <canvas> element for QR codes at its full native resolution.
+ * Scans an individual <img> or <canvas> element for all QR codes at its full native resolution.
  * @param {HTMLImageElement | HTMLCanvasElement} el
  * @param {number} [maxDimension=1200]
- * @returns {{ code: any, data: string, rect: DOMRect, element: HTMLElement, location: any } | null}
+ * @returns {Array<{ data: string, location: any, rect: DOMRect, element: HTMLElement }>}
  */
 export function scanMediaElement(el, maxDimension = 1200) {
-  if (!el) return null;
+  if (!el) return [];
 
   let width = 0;
   let height = 0;
 
   if (el.tagName === 'IMG') {
-    if (!el.complete || !el.naturalWidth || !el.naturalHeight) return null;
+    if (!el.complete || !el.naturalWidth || !el.naturalHeight) return [];
     width = el.naturalWidth;
     height = el.naturalHeight;
   } else if (el.tagName === 'CANVAS') {
     width = el.width;
     height = el.height;
   } else {
-    return null;
+    return [];
   }
 
   // Skip tiny icons that cannot possibly be QR codes (< 20px)
-  if (width < 20 || height < 20) return null;
+  if (width < 20 || height < 20) return [];
 
   // Scale down if insanely large (> 1200px)
   let scanW = width;
@@ -63,27 +64,32 @@ export function scanMediaElement(el, maxDimension = 1200) {
     scanH = Math.round(scanH * ratio);
   }
 
-  if (typeof document === 'undefined') return null;
+  if (typeof document === 'undefined') return [];
 
   const canvas = document.createElement('canvas');
   canvas.width = scanW;
   canvas.height = scanH;
   const ctx = canvas.getContext('2d');
-  if (!ctx) return null;
+  if (!ctx) return [];
 
   try {
     ctx.drawImage(el, 0, 0, scanW, scanH);
-    const imgData = ctx.getImageData(0, 0, scanW, scanH);
-    const code = jsQR(imgData.data, scanW, scanH, {
-      inversionAttempts: 'attemptBoth'
-    });
+    let imgData = ctx.getImageData(0, 0, scanW, scanH);
+    const found = [];
+    const maxPerElement = 4;
+    let count = 0;
 
-    if (code) {
+    while (count < maxPerElement) {
+      const code = jsQR(imgData.data, scanW, scanH, {
+        inversionAttempts: 'attemptBoth'
+      });
+      if (!code) break;
+
       const rect = el.getBoundingClientRect();
       const scaleX = rect.width / scanW;
       const scaleY = rect.height / scanH;
 
-      // Project location points to viewport
+      // Project location points to absolute viewport coordinates
       const location = {
         topLeftCorner: {
           x: rect.left + code.location.topLeftCorner.x * scaleX,
@@ -103,37 +109,45 @@ export function scanMediaElement(el, maxDimension = 1200) {
         }
       };
 
-      return {
-        code,
+      found.push({
         data: code.data,
         location,
         rect,
-        element: el
-      };
+        element: el,
+        isDom: true
+      });
+
+      count++;
+      // Mask this QR region on the offscreen canvas to detect any additional QRs
+      maskQrRegion(ctx, code.location);
+      imgData = ctx.getImageData(0, 0, scanW, scanH);
     }
+
+    return found;
   } catch {
     // Cross-origin image (CORS) or tainted canvas - ignore safely
-    return null;
+    return [];
   }
-
-  return null;
 }
 
 /**
  * Scans all visible <img> and <canvas> tags on the page.
- * @returns {{ code: any, data: string, rect: DOMRect, element: HTMLElement, location: any } | null}
+ * @returns {Array<{ data: string, location: any, rect: DOMRect, element: HTMLElement, isDom: boolean }>}
  */
 export function scanVisibleDomImages() {
-  if (typeof document === 'undefined') return null;
+  if (typeof document === 'undefined') return [];
 
-  const images = Array.from(document.querySelectorAll('img, canvas'));
+  const elements = Array.from(document.querySelectorAll('img, canvas'));
+  const allResults = [];
 
-  for (const el of images) {
+  for (const el of elements) {
     if (isElementInViewport(el)) {
-      const res = scanMediaElement(el);
-      if (res) return res;
+      const results = scanMediaElement(el);
+      if (Array.isArray(results) && results.length > 0) {
+        allResults.push(...results);
+      }
     }
   }
 
-  return null;
+  return allResults;
 }

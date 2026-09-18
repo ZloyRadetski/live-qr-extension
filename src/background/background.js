@@ -10,6 +10,7 @@
 import jsQR from 'jsqr';
 import { getSettings, saveSettings, addScanHistory, isDomainBlacklisted } from '../utils/storage.js';
 import { classifyContent } from '../utils/parser.js';
+import { maskQrRegion } from '../utils/coordinates.js';
 
 let isGlobalActive = false;
 let isLoopRunning = false;
@@ -32,10 +33,10 @@ function getCanvas() {
 }
 
 /**
- * Decodes a JPEG data URL with jsQR using configurable scaling.
+ * Decodes a JPEG data URL with jsQR using configurable scaling and iterative masking for multiple QRs.
  * @param {string} dataUrl
  * @param {number} [maxW=1080]
- * @returns {Promise<{ qr: any, scanWidth: number, scanHeight: number } | null>}
+ * @returns {Promise<{ qrs: any[], qr: any, scanWidth: number, scanHeight: number } | null>}
  */
 async function decodeDataUrl(dataUrl, maxW = 1080) {
   const { canvas, ctx, cachedImg } = getCanvas();
@@ -59,10 +60,23 @@ async function decodeDataUrl(dataUrl, maxW = 1080) {
       }
 
       ctx.drawImage(cachedImg, 0, 0, w, h);
-      const imgData = ctx.getImageData(0, 0, w, h);
-      const qr = jsQR(imgData.data, w, h, { inversionAttempts: 'attemptBoth' });
+      let imgData = ctx.getImageData(0, 0, w, h);
+      const qrs = [];
+      const maxQRs = 6;
+      let count = 0;
 
-      resolve({ qr, scanWidth: w, scanHeight: h });
+      while (count < maxQRs) {
+        const code = jsQR(imgData.data, w, h, { inversionAttempts: 'attemptBoth' });
+        if (!code) break;
+        qrs.push(code);
+        count++;
+
+        // Mask this QR on canvas so remaining QRs can be detected
+        maskQrRegion(ctx, code.location);
+        imgData = ctx.getImageData(0, 0, w, h);
+      }
+
+      resolve({ qrs, qr: qrs[0] || null, scanWidth: w, scanHeight: h });
     };
 
     cachedImg.onerror = () => resolve(null);
@@ -147,17 +161,20 @@ async function globalCaptureLoop() {
       if (dataUrl && isGlobalActive && !isTabScrolling) {
         const decoded = await decodeDataUrl(dataUrl, maxW);
 
-        if (decoded && decoded.qr) {
+        if (decoded && decoded.qrs && decoded.qrs.length > 0) {
           hasActiveQR = true;
-          const parsed = classifyContent(decoded.qr.data);
-          addScanHistory({
-            text: decoded.qr.data,
-            type: parsed.type,
-            title: parsed.title
-          }).catch(() => {});
+          for (const qr of decoded.qrs) {
+            const parsed = classifyContent(qr.data);
+            addScanHistory({
+              text: qr.data,
+              type: parsed.type,
+              title: parsed.title
+            }).catch(() => {});
+          }
 
           browser.tabs.sendMessage(tab.id, {
             type: 'QR_DETECTED',
+            qrResults: decoded.qrs,
             qrResult: decoded.qr,
             scanWidth: decoded.scanWidth,
             scanHeight: decoded.scanHeight

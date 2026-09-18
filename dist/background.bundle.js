@@ -10271,6 +10271,23 @@
     return str.slice(0, max - 1) + "\u2026";
   }
 
+  // src/utils/coordinates.js
+  function maskQrRegion(ctx2, location, margin = 4, fillColor = "#ffffff") {
+    if (!ctx2 || !location) return;
+    const { topLeftCorner: tl, topRightCorner: tr, bottomRightCorner: br, bottomLeftCorner: bl } = location;
+    if (!tl || !tr || !br || !bl) return;
+    ctx2.save();
+    ctx2.fillStyle = fillColor;
+    ctx2.beginPath();
+    ctx2.moveTo(tl.x - margin, tl.y - margin);
+    ctx2.lineTo(tr.x + margin, tr.y - margin);
+    ctx2.lineTo(br.x + margin, br.y + margin);
+    ctx2.lineTo(bl.x - margin, bl.y + margin);
+    ctx2.closePath();
+    ctx2.fill();
+    ctx2.restore();
+  }
+
   // src/background/background.js
   var isGlobalActive = false;
   var isLoopRunning = false;
@@ -10305,9 +10322,19 @@
           canvas2.height = h;
         }
         ctx2.drawImage(cachedImg2, 0, 0, w, h);
-        const imgData = ctx2.getImageData(0, 0, w, h);
-        const qr = (0, import_jsqr.default)(imgData.data, w, h, { inversionAttempts: "attemptBoth" });
-        resolve({ qr, scanWidth: w, scanHeight: h });
+        let imgData = ctx2.getImageData(0, 0, w, h);
+        const qrs = [];
+        const maxQRs = 6;
+        let count = 0;
+        while (count < maxQRs) {
+          const code = (0, import_jsqr.default)(imgData.data, w, h, { inversionAttempts: "attemptBoth" });
+          if (!code) break;
+          qrs.push(code);
+          count++;
+          maskQrRegion(ctx2, code.location);
+          imgData = ctx2.getImageData(0, 0, w, h);
+        }
+        resolve({ qrs, qr: qrs[0] || null, scanWidth: w, scanHeight: h });
       };
       cachedImg2.onerror = () => resolve(null);
       cachedImg2.src = dataUrl;
@@ -10369,17 +10396,20 @@
         });
         if (dataUrl && isGlobalActive && !isTabScrolling) {
           const decoded = await decodeDataUrl(dataUrl, maxW);
-          if (decoded && decoded.qr) {
+          if (decoded && decoded.qrs && decoded.qrs.length > 0) {
             hasActiveQR = true;
-            const parsed = classifyContent(decoded.qr.data);
-            addScanHistory({
-              text: decoded.qr.data,
-              type: parsed.type,
-              title: parsed.title
-            }).catch(() => {
-            });
+            for (const qr of decoded.qrs) {
+              const parsed = classifyContent(qr.data);
+              addScanHistory({
+                text: qr.data,
+                type: parsed.type,
+                title: parsed.title
+              }).catch(() => {
+              });
+            }
             browser.tabs.sendMessage(tab.id, {
               type: "QR_DETECTED",
+              qrResults: decoded.qrs,
               qrResult: decoded.qr,
               scanWidth: decoded.scanWidth,
               scanHeight: decoded.scanHeight

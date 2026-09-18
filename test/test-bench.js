@@ -43,6 +43,34 @@ async function renderSampleQRs() {
     });
     smallImg.src = dataUrl;
   }
+
+  // Multi-QR Test Section
+  const multi1 = document.getElementById('multi-qr-1');
+  if (multi1) {
+    multi1.src = await QRCode.toDataURL('https://github.com', {
+      width: 200,
+      margin: 2,
+      color: { dark: '#1e293b', light: '#ffffff' }
+    });
+  }
+
+  const multi2 = document.getElementById('multi-qr-2');
+  if (multi2) {
+    await QRCode.toCanvas(multi2, 'mailto:test@radar.io', {
+      width: 140,
+      margin: 2,
+      color: { dark: '#047857', light: '#ffffff' }
+    });
+  }
+
+  const multi3 = document.getElementById('multi-qr-3');
+  if (multi3) {
+    multi3.src = await QRCode.toDataURL('smsto:+123456789', {
+      width: 200,
+      margin: 2,
+      color: { dark: '#6b21a8', light: '#ffffff' }
+    });
+  }
 }
 
 // Custom QR Generator
