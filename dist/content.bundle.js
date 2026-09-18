@@ -186,7 +186,7 @@
     globalActive: false,
     // Whether scanner runs globally across all tabs
     scanRate: 2,
-    // FPS: 1 to 120 (Slider, default 2 FPS Eco)
+    // FPS: 1 to 30 (Slider, default 2 FPS Eco)
     themeColor: "gold",
     // 'cyan' | 'emerald' | 'violet' | 'gold' | 'pink'
     cardDisplayMode: "hover",

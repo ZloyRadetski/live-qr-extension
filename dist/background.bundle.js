@@ -1986,7 +1986,7 @@
     globalActive: false,
     // Whether scanner runs globally across all tabs
     scanRate: 2,
-    // FPS: 1 to 120 (Slider, default 2 FPS Eco)
+    // FPS: 1 to 30 (Slider, default 2 FPS Eco)
     themeColor: "gold",
     // 'cyan' | 'emerald' | 'violet' | 'gold' | 'pink'
     cardDisplayMode: "hover",
@@ -2479,7 +2479,7 @@
           if (frameHash === lastFrameHash) {
             if (hasActiveQR) {
               unchangedEmptyFrames = 0;
-              const userFps = Math.max(1, Math.min(120, Number(settings.scanRate) || 2));
+              const userFps = Math.max(1, Math.min(30, Number(settings.scanRate) || 2));
               loopTimer = setTimeout(globalCaptureLoop, Math.round(1e3 / userFps));
               return;
             } else {
@@ -2534,8 +2534,8 @@
     } catch (err) {
     }
     if (isGlobalActive) {
-      const userFps = Math.max(1, Math.min(120, Number(settings.scanRate) || 2));
-      const effectiveFps = hasActiveQR ? userFps : Math.max(1, Math.min(10, userFps));
+      const userFps = Math.max(1, Math.min(30, Number(settings.scanRate) || 2));
+      const effectiveFps = hasActiveQR ? userFps : Math.max(1, Math.min(6, userFps));
       const targetInterval = Math.round(1e3 / effectiveFps);
       const elapsed = performance.now() - loopStartTime;
       const nextDelay = Math.max(4, targetInterval - elapsed);

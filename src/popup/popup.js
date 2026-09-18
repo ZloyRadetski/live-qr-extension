@@ -140,16 +140,15 @@ function updateUIState(active) {
 function updateFpsUI(fps) {
   if (fpsSlider) {
     fpsSlider.value = fps;
-    const pct = ((fps - 1) / (120 - 1)) * 100;
+    const pct = ((fps - 1) / (30 - 1)) * 100;
     fpsSlider.style.background = `linear-gradient(to right, var(--accent-primary) 0%, var(--accent-primary) ${pct}%, var(--bg-tertiary) ${pct}%, var(--bg-tertiary) 100%)`;
   }
   if (fpsValueBadge) {
     let modeHint = '';
-    if (fps <= 5) modeHint = ' (Eco)';
-    else if (fps === 12) modeHint = ' (Balanced)';
-    else if (fps === 30) modeHint = ' (Std)';
-    else if (fps === 60) modeHint = ' (Smooth)';
-    else if (fps >= 120) modeHint = ' (Max)';
+    if (fps <= 3) modeHint = ' (Eco)';
+    else if (fps <= 10) modeHint = ' (Std)';
+    else if (fps <= 20) modeHint = ' (Smooth)';
+    else if (fps >= 30) modeHint = ' (Max)';
     fpsValueBadge.textContent = `${fps} FPS${modeHint}`;
   }
 }
@@ -179,8 +178,8 @@ async function loadPreferences() {
   settingAutoCopy.checked = settings.autoCopy ?? false;
   settingPauseScroll.checked = settings.pauseOnScroll ?? true;
 
-  // 4. Scan Rate Slider (1 to 120 FPS)
-  const currentFps = Math.max(1, Math.min(120, settings.scanRate ?? 2));
+  // 4. Scan Rate Slider (1 to 30 FPS)
+  const currentFps = Math.max(1, Math.min(30, settings.scanRate ?? 2));
   updateFpsUI(currentFps);
 
   // 5. Scan Resolution Profile
@@ -380,7 +379,7 @@ function setupEventListeners() {
     applySettingChange({ cardDisplayMode: btn.dataset.mode });
   });
 
-  // Speed FPS slider (1 to 120 FPS)
+  // Speed FPS slider (1 to 30 FPS)
   let fpsDebounceTimer = null;
   if (fpsSlider) {
     fpsSlider.addEventListener('input', (e) => {

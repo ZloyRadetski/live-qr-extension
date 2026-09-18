@@ -420,7 +420,7 @@ async function globalCaptureLoop() {
           if (hasActiveQR) {
             // QR is locked, frame is identical — safe to reuse previous result without re-decoding
             unchangedEmptyFrames = 0;
-            const userFps = Math.max(1, Math.min(120, Number(settings.scanRate) || 2));
+            const userFps = Math.max(1, Math.min(30, Number(settings.scanRate) || 2));
             loopTimer = setTimeout(globalCaptureLoop, Math.round(1000 / userFps));
             return;
           } else {
@@ -481,14 +481,14 @@ async function globalCaptureLoop() {
   }
 
   if (isGlobalActive) {
-    // User-configured FPS from 1 to 120 (Slider setting):
-    const userFps = Math.max(1, Math.min(120, Number(settings.scanRate) || 2));
+    // User-configured FPS from 1 to 30 (Slider setting):
+    const userFps = Math.max(1, Math.min(30, Number(settings.scanRate) || 2));
 
-    // When a QR code is on screen, run at full userFps for maximum tracking smoothness (up to 120 FPS).
-    // When idle (no QR code on screen), cap idle scan loop at 10 FPS to avoid burning CPU on empty screens.
+    // When a QR code is on screen, run at full userFps for fast tracking (up to 30 FPS).
+    // When idle (no QR code on screen), cap idle scan loop at 6 FPS to avoid burning CPU on empty screens.
     const effectiveFps = hasActiveQR
       ? userFps
-      : Math.max(1, Math.min(10, userFps));
+      : Math.max(1, Math.min(6, userFps));
 
     const targetInterval = Math.round(1000 / effectiveFps);
     const elapsed = performance.now() - loopStartTime;

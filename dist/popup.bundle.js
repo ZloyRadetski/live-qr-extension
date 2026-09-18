@@ -8,7 +8,7 @@
     globalActive: false,
     // Whether scanner runs globally across all tabs
     scanRate: 2,
-    // FPS: 1 to 120 (Slider, default 2 FPS Eco)
+    // FPS: 1 to 30 (Slider, default 2 FPS Eco)
     themeColor: "gold",
     // 'cyan' | 'emerald' | 'violet' | 'gold' | 'pink'
     cardDisplayMode: "hover",
@@ -316,16 +316,15 @@
   function updateFpsUI(fps) {
     if (fpsSlider) {
       fpsSlider.value = fps;
-      const pct = (fps - 1) / (120 - 1) * 100;
+      const pct = (fps - 1) / (30 - 1) * 100;
       fpsSlider.style.background = `linear-gradient(to right, var(--accent-primary) 0%, var(--accent-primary) ${pct}%, var(--bg-tertiary) ${pct}%, var(--bg-tertiary) 100%)`;
     }
     if (fpsValueBadge) {
       let modeHint = "";
-      if (fps <= 5) modeHint = " (Eco)";
-      else if (fps === 12) modeHint = " (Balanced)";
-      else if (fps === 30) modeHint = " (Std)";
-      else if (fps === 60) modeHint = " (Smooth)";
-      else if (fps >= 120) modeHint = " (Max)";
+      if (fps <= 3) modeHint = " (Eco)";
+      else if (fps <= 10) modeHint = " (Std)";
+      else if (fps <= 20) modeHint = " (Smooth)";
+      else if (fps >= 30) modeHint = " (Max)";
       fpsValueBadge.textContent = `${fps} FPS${modeHint}`;
     }
   }
@@ -344,7 +343,7 @@
     settingSound.checked = settings.soundEnabled ?? false;
     settingAutoCopy.checked = settings.autoCopy ?? false;
     settingPauseScroll.checked = settings.pauseOnScroll ?? true;
-    const currentFps = Math.max(1, Math.min(120, settings.scanRate ?? 2));
+    const currentFps = Math.max(1, Math.min(30, settings.scanRate ?? 2));
     updateFpsUI(currentFps);
     const currentRes = settings.scanResolution || "720";
     resolutionSelector.querySelectorAll(".segment-btn").forEach((btn) => {

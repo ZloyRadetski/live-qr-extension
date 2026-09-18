@@ -30,26 +30,25 @@ test('DEFAULT_SETTINGS contains all customizable fields with correct default val
   assert.ok(Array.isArray(DEFAULT_SETTINGS.blacklist));
 });
 
-test('scanRate values up to 120 FPS compute correct intervals without clamping to 5', () => {
+test('scanRate values up to 30 FPS compute correct intervals and idle throttling', () => {
   const computeDelay = (rate, hasActive) => {
-    const userFps = Math.max(1, Math.min(120, Number(rate) || 12));
+    const userFps = Math.max(1, Math.min(30, Number(rate) || 2));
     const effectiveFps = hasActive
       ? userFps
-      : Math.max(1, Math.min(userFps, Math.max(4, Math.round(userFps * 0.75))));
+      : Math.max(1, Math.min(6, userFps));
     return Math.round(1000 / effectiveFps);
   };
 
   assert.equal(computeDelay(1, true), 1000);
-  assert.equal(computeDelay(12, true), 83);
+  assert.equal(computeDelay(10, true), 100);
+  assert.equal(computeDelay(20, true), 50);
   assert.equal(computeDelay(30, true), 33);
-  assert.equal(computeDelay(60, true), 17);
-  assert.equal(computeDelay(120, true), 8);
+  assert.equal(computeDelay(60, true), 33); // clamped to 30
 
-  // Idle scales adaptively
+  // Idle scales adaptively (capped at 6 FPS)
   assert.equal(computeDelay(1, false), 1000);
-  assert.equal(computeDelay(12, false), 111);
-  assert.equal(computeDelay(30, false), 43);
-  assert.equal(computeDelay(60, false), 22);
-  assert.equal(computeDelay(120, false), 11);
+  assert.equal(computeDelay(2, false), 500);
+  assert.equal(computeDelay(10, false), 167); // capped at 6 FPS
+  assert.equal(computeDelay(30, false), 167); // capped at 6 FPS
 });
 
