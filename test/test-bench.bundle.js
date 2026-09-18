@@ -2934,6 +2934,23 @@
   }
 
   // src/content/overlay.js
+  function createSvg(viewBox, width, height, children) {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("width", String(width));
+    svg.setAttribute("height", String(height));
+    svg.setAttribute("viewBox", viewBox);
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-width", "2");
+    for (const [tag, attrs] of children) {
+      const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
+      for (const [k2, v2] of Object.entries(attrs)) {
+        el.setAttribute(k2, v2);
+      }
+      svg.appendChild(el);
+    }
+    return svg;
+  }
   var QRBoxTracker = class {
     constructor(id, root, options, callbacks = {}) {
       this.id = id;
@@ -2971,19 +2988,25 @@
       this.boxElement = document.createElement("div");
       this.boxElement.className = "qr-radar-box qr-hidden";
       this.boxElement.dataset.trackerId = this.id;
-      this.boxElement.innerHTML = `
-      <div class="qr-radar-box-frame">
-        <div class="qr-radar-corner qr-radar-corner-tl"></div>
-        <div class="qr-radar-corner qr-radar-corner-tr"></div>
-        <div class="qr-radar-corner qr-radar-corner-bl"></div>
-        <div class="qr-radar-corner qr-radar-corner-br"></div>
-        <div class="qr-radar-mini-badge" title="Hover for details">
-          <span class="qr-mini-dot"></span>
-          <span class="qr-mini-type">QR</span>
-        </div>
-      </div>
-    `;
-      this.miniBadge = this.boxElement.querySelector(".qr-radar-mini-badge");
+      const frame = document.createElement("div");
+      frame.className = "qr-radar-box-frame";
+      for (const pos of ["tl", "tr", "bl", "br"]) {
+        const corner = document.createElement("div");
+        corner.className = `qr-radar-corner qr-radar-corner-${pos}`;
+        frame.appendChild(corner);
+      }
+      const miniBadge = document.createElement("div");
+      miniBadge.className = "qr-radar-mini-badge";
+      miniBadge.title = "Hover for details";
+      const miniDot = document.createElement("span");
+      miniDot.className = "qr-mini-dot";
+      const miniType = document.createElement("span");
+      miniType.className = "qr-mini-type";
+      miniType.textContent = "QR";
+      miniBadge.append(miniDot, miniType);
+      frame.appendChild(miniBadge);
+      this.boxElement.appendChild(frame);
+      this.miniBadge = miniBadge;
       this.hudCard = document.createElement("div");
       this.hudCard.className = "qr-radar-hud-card";
       this.boxElement.appendChild(this.hudCard);
@@ -3173,47 +3196,53 @@
      */
     renderCardContent(text) {
       const parsed = classifyContent(text);
-      let actionBtnHtml = "";
+      const header = document.createElement("div");
+      header.className = "qr-radar-hud-header";
+      const badge = document.createElement("span");
+      badge.className = `qr-radar-type-badge qr-badge-${parsed.type}`;
+      badge.textContent = parsed.type;
+      const title = document.createElement("span");
+      title.style.fontSize = "11px";
+      title.style.color = "#8b949e";
+      title.textContent = parsed.title;
+      header.append(badge, title);
+      const body = document.createElement("div");
+      body.className = "qr-radar-hud-body";
+      body.textContent = parsed.summary;
+      const actions = document.createElement("div");
+      actions.className = "qr-radar-hud-actions";
+      const copyBtn = document.createElement("button");
+      copyBtn.className = "qr-btn qr-btn-secondary qr-copy-btn";
+      const copySvg = createSvg("0 0 24 24", 14, 14, [
+        ["rect", { x: "9", y: "9", width: "13", height: "13", rx: "2", ry: "2" }],
+        ["path", { d: "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" }]
+      ]);
+      const copyLabel = document.createElement("span");
+      copyLabel.className = "qr-copy-label";
+      copyLabel.textContent = "Copy";
+      copyBtn.append(copySvg, copyLabel);
+      copyBtn.addEventListener("click", (e2) => {
+        e2.stopPropagation();
+        if (this.callbacks.copy) {
+          this.callbacks.copy(text, copyBtn);
+        }
+      });
+      actions.appendChild(copyBtn);
       if (parsed.type === "url" && parsed.actionUrl) {
-        actionBtnHtml = `
-        <a href="${escapeHtml(parsed.actionUrl)}" target="_blank" rel="noopener noreferrer" class="qr-btn qr-btn-primary">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
-            <polyline points="15 3 21 3 21 9"></polyline>
-            <line x1="10" y1="14" x2="21" y2="3"></line>
-          </svg>
-          Open Link
-        </a>
-      `;
+        const openBtn = document.createElement("a");
+        openBtn.href = parsed.actionUrl;
+        openBtn.target = "_blank";
+        openBtn.rel = "noopener noreferrer";
+        openBtn.className = "qr-btn qr-btn-primary";
+        const openSvg = createSvg("0 0 24 24", 14, 14, [
+          ["path", { d: "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" }],
+          ["polyline", { points: "15 3 21 3 21 9" }],
+          ["line", { x1: "10", y1: "14", x2: "21", y2: "3" }]
+        ]);
+        openBtn.append(openSvg, document.createTextNode(" Open Link"));
+        actions.appendChild(openBtn);
       }
-      this.hudCard.innerHTML = `
-      <div class="qr-radar-hud-header">
-        <span class="qr-radar-type-badge qr-badge-${parsed.type}">${parsed.type}</span>
-        <span style="font-size: 11px; color: #8b949e;">${escapeHtml(parsed.title)}</span>
-      </div>
-      <div class="qr-radar-hud-body">
-        ${escapeHtml(parsed.summary)}
-      </div>
-      <div class="qr-radar-hud-actions">
-        <button class="qr-btn qr-btn-secondary qr-copy-btn">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-          </svg>
-          <span class="qr-copy-label">Copy</span>
-        </button>
-        ${actionBtnHtml}
-      </div>
-    `;
-      const copyBtn = this.hudCard.querySelector(".qr-copy-btn");
-      if (copyBtn) {
-        copyBtn.addEventListener("click", (e2) => {
-          e2.stopPropagation();
-          if (this.callbacks.copy) {
-            this.callbacks.copy(text, copyBtn);
-          }
-        });
-      }
+      this.hudCard.replaceChildren(header, body, actions);
       if (this.miniBadge) {
         const typeLabels = {
           url: "URL",
@@ -3612,10 +3641,6 @@
       this.isScrolling = false;
     }
   };
-  function escapeHtml(str) {
-    if (!str) return "";
-    return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
-  }
 
   // test/test-bench.js
   async function renderSampleQRs() {

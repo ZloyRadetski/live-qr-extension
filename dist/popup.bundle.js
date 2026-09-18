@@ -221,6 +221,23 @@
   }
 
   // src/popup/popup.js
+  function createSvg(viewBox, width, height, children) {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("width", String(width));
+    svg.setAttribute("height", String(height));
+    svg.setAttribute("viewBox", viewBox);
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-width", "2");
+    for (const [tag, attrs] of children) {
+      const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
+      for (const [k, v] of Object.entries(attrs)) {
+        el.setAttribute(k, v);
+      }
+      svg.appendChild(el);
+    }
+    return svg;
+  }
   var activeTabId = null;
   var currentDomain = "";
   var isScannerActive = false;
@@ -367,23 +384,31 @@
       }
     }
     if (blacklist.length === 0) {
-      blacklistChips.innerHTML = '<span style="font-size: 11px; color: var(--text-muted);">No sites excluded</span>';
+      const emptySpan = document.createElement("span");
+      emptySpan.style.fontSize = "11px";
+      emptySpan.style.color = "var(--text-muted)";
+      emptySpan.textContent = "No sites excluded";
+      blacklistChips.replaceChildren(emptySpan);
       return;
     }
-    blacklistChips.innerHTML = blacklist.map((domain) => `
-    <span class="blacklist-chip">
-      ${escapeHtml(domain)}
-      <button class="chip-remove" data-domain="${escapeHtml(domain)}" title="Remove exclusion">\u2715</button>
-    </span>
-  `).join("");
-    blacklistChips.querySelectorAll(".chip-remove").forEach((btn) => {
-      btn.addEventListener("click", async (e) => {
+    const chips = blacklist.map((domain) => {
+      const chip = document.createElement("span");
+      chip.className = "blacklist-chip";
+      chip.textContent = domain + " ";
+      const removeBtn = document.createElement("button");
+      removeBtn.className = "chip-remove";
+      removeBtn.dataset.domain = domain;
+      removeBtn.title = "Remove exclusion";
+      removeBtn.textContent = "\u2715";
+      removeBtn.addEventListener("click", async (e) => {
         e.stopPropagation();
-        const domain = btn.dataset.domain;
         const updated = await toggleDomainBlacklist(domain);
         renderBlacklist(updated);
       });
+      chip.appendChild(removeBtn);
+      return chip;
     });
+    blacklistChips.replaceChildren(...chips);
   }
   async function handleToggleClick() {
     const targetType = isScannerActive ? "STOP_GLOBAL_SCAN" : "START_GLOBAL_SCAN";
@@ -422,69 +447,81 @@
     const history = await getScanHistory();
     historyCount.textContent = history.length;
     if (history.length === 0) {
-      historyList.innerHTML = `
-      <div class="empty-state">
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-          <circle cx="12" cy="12" r="9"></circle>
-          <path d="M12 3a9 9 0 0 1 9 9"></path>
-          <circle cx="12" cy="12" r="2"></circle>
-        </svg>
-        <p>No QR codes scanned yet</p>
-      </div>
-    `;
+      const emptyDiv = document.createElement("div");
+      emptyDiv.className = "empty-state";
+      const svg = createSvg("0 0 24 24", 28, 28, [
+        ["circle", { cx: "12", cy: "12", r: "9" }],
+        ["path", { d: "M12 3a9 9 0 0 1 9 9" }],
+        ["circle", { cx: "12", cy: "12", r: "2" }]
+      ]);
+      const msg = document.createElement("p");
+      msg.textContent = "No QR codes scanned yet";
+      emptyDiv.append(svg, msg);
+      historyList.replaceChildren(emptyDiv);
       return;
     }
-    historyList.innerHTML = history.map((item) => {
+    const itemElements = history.map((item) => {
       const parsed = classifyContent(item.text);
       const timeAgo = formatTimeAgo(item.timestamp);
-      let openBtn = "";
-      if (parsed.type === "url" && parsed.actionUrl) {
-        openBtn = `
-        <a href="${escapeHtml(parsed.actionUrl)}" target="_blank" rel="noopener noreferrer" class="item-btn" title="Open Link">
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
-            <polyline points="15 3 21 3 21 9"></polyline>
-          </svg>
-          Open
-        </a>
-      `;
-      }
-      return `
-      <div class="history-item" data-id="${escapeHtml(item.id)}">
-        <div class="history-item-top">
-          <span class="item-badge badge-${parsed.type}">${parsed.type}</span>
-          <span class="item-time">${timeAgo}</span>
-        </div>
-        <div class="item-content" title="${escapeHtml(item.text)}">
-          ${escapeHtml(item.text)}
-        </div>
-        <div class="item-actions">
-          <button class="item-btn copy-item-btn" data-text="${escapeHtml(item.text)}" title="Copy">
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-            </svg>
-            <span>Copy</span>
-          </button>
-          ${openBtn}
-        </div>
-      </div>
-    `;
-    }).join("");
-    historyList.querySelectorAll(".copy-item-btn").forEach((btn) => {
-      btn.addEventListener("click", async (e) => {
+      const itemDiv = document.createElement("div");
+      itemDiv.className = "history-item";
+      itemDiv.dataset.id = item.id;
+      const topDiv = document.createElement("div");
+      topDiv.className = "history-item-top";
+      const badge = document.createElement("span");
+      badge.className = `item-badge badge-${parsed.type}`;
+      badge.textContent = parsed.type;
+      const time = document.createElement("span");
+      time.className = "item-time";
+      time.textContent = timeAgo;
+      topDiv.append(badge, time);
+      const contentDiv = document.createElement("div");
+      contentDiv.className = "item-content";
+      contentDiv.title = item.text;
+      contentDiv.textContent = item.text;
+      const actionsDiv = document.createElement("div");
+      actionsDiv.className = "item-actions";
+      const copyBtn = document.createElement("button");
+      copyBtn.className = "item-btn copy-item-btn";
+      copyBtn.title = "Copy";
+      copyBtn.dataset.text = item.text;
+      const copySvg = createSvg("0 0 24 24", 11, 11, [
+        ["rect", { x: "9", y: "9", width: "13", height: "13", rx: "2", ry: "2" }],
+        ["path", { d: "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" }]
+      ]);
+      const copyText = document.createElement("span");
+      copyText.textContent = "Copy";
+      copyBtn.append(copySvg, copyText);
+      copyBtn.addEventListener("click", async (e) => {
         e.stopPropagation();
-        const text = btn.dataset.text;
-        await navigator.clipboard.writeText(text);
-        const span = btn.querySelector("span");
-        btn.classList.add("copied");
-        if (span) span.textContent = "Copied!";
+        await navigator.clipboard.writeText(item.text);
+        copyBtn.classList.add("copied");
+        copyText.textContent = "Copied!";
         setTimeout(() => {
-          btn.classList.remove("copied");
-          if (span) span.textContent = "Copy";
+          copyBtn.classList.remove("copied");
+          copyText.textContent = "Copy";
         }, 1800);
       });
+      actionsDiv.appendChild(copyBtn);
+      if (parsed.type === "url" && parsed.actionUrl) {
+        const openA = document.createElement("a");
+        openA.href = parsed.actionUrl;
+        openA.target = "_blank";
+        openA.rel = "noopener noreferrer";
+        openA.className = "item-btn";
+        openA.title = "Open Link";
+        const openSvg = createSvg("0 0 24 24", 11, 11, [
+          ["path", { d: "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" }],
+          ["polyline", { points: "15 3 21 3 21 9" }],
+          ["line", { x1: "10", y1: "14", x2: "21", y2: "3" }]
+        ]);
+        openA.append(openSvg, document.createTextNode(" Open"));
+        actionsDiv.appendChild(openA);
+      }
+      itemDiv.append(topDiv, contentDiv, actionsDiv);
+      return itemDiv;
     });
+    historyList.replaceChildren(...itemElements);
   }
   function setupEventListeners() {
     toggleBtn.addEventListener("click", handleToggleClick);
@@ -562,10 +599,6 @@
     if (diffHours < 24) return `${diffHours}h ago`;
     const diffDays = Math.floor(diffHours / 24);
     return `${diffDays}d ago`;
-  }
-  function escapeHtml(str) {
-    if (!str) return "";
-    return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
   }
   document.addEventListener("DOMContentLoaded", init);
 })();
