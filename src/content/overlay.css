@@ -3,44 +3,50 @@
 :root {
   --qr-color: #00f0ff;
   --qr-color-sec: #38ef7d;
-  --qr-glow: rgba(0, 240, 255, 0.4);
-  --qr-bg-tint: rgba(0, 240, 255, 0.05);
+  --qr-glow: rgba(0, 240, 255, 0.35);
+  --qr-bg-tint: rgba(0, 240, 255, 0.07);
+  --qr-bg-tint-strong: rgba(0, 240, 255, 0.14);
 }
 
 /* Color Themes */
 #qr-radar-root.theme-cyan {
   --qr-color: #00f0ff;
   --qr-color-sec: #38ef7d;
-  --qr-glow: rgba(0, 240, 255, 0.4);
-  --qr-bg-tint: rgba(0, 240, 255, 0.05);
+  --qr-glow: rgba(0, 240, 255, 0.35);
+  --qr-bg-tint: rgba(0, 240, 255, 0.07);
+  --qr-bg-tint-strong: rgba(0, 240, 255, 0.14);
 }
 
 #qr-radar-root.theme-emerald {
   --qr-color: #10b981;
   --qr-color-sec: #34d399;
-  --qr-glow: rgba(16, 185, 129, 0.4);
-  --qr-bg-tint: rgba(16, 185, 129, 0.05);
+  --qr-glow: rgba(16, 185, 129, 0.35);
+  --qr-bg-tint: rgba(16, 185, 129, 0.07);
+  --qr-bg-tint-strong: rgba(16, 185, 129, 0.14);
 }
 
 #qr-radar-root.theme-violet {
   --qr-color: #a855f7;
   --qr-color-sec: #c084fc;
-  --qr-glow: rgba(168, 85, 247, 0.4);
-  --qr-bg-tint: rgba(168, 85, 247, 0.05);
+  --qr-glow: rgba(168, 85, 247, 0.35);
+  --qr-bg-tint: rgba(168, 85, 247, 0.07);
+  --qr-bg-tint-strong: rgba(168, 85, 247, 0.14);
 }
 
 #qr-radar-root.theme-gold {
   --qr-color: #f59e0b;
   --qr-color-sec: #fbbf24;
-  --qr-glow: rgba(245, 158, 11, 0.4);
-  --qr-bg-tint: rgba(245, 158, 11, 0.05);
+  --qr-glow: rgba(245, 158, 11, 0.35);
+  --qr-bg-tint: rgba(245, 158, 11, 0.07);
+  --qr-bg-tint-strong: rgba(245, 158, 11, 0.14);
 }
 
 #qr-radar-root.theme-pink {
   --qr-color: #ec4899;
   --qr-color-sec: #f472b6;
-  --qr-glow: rgba(236, 72, 153, 0.4);
-  --qr-bg-tint: rgba(236, 72, 153, 0.05);
+  --qr-glow: rgba(236, 72, 153, 0.35);
+  --qr-bg-tint: rgba(236, 72, 153, 0.07);
+  --qr-bg-tint-strong: rgba(236, 72, 153, 0.14);
 }
 
 #qr-radar-root {
@@ -86,73 +92,42 @@
   transition: opacity 0.05s ease !important;
 }
 
+/* Main frame — border + optional background tint. NO external glow. */
 .qr-radar-box-frame {
   position: absolute;
   inset: -6px;
-  border: 2px solid var(--qr-color);
-  border-radius: 12px;
+  border: 1.5px solid var(--qr-color);
+  border-radius: 10px;
+  /* Background tint is the only fill — subtle color wash over the QR area */
   background: var(--qr-bg-tint);
-  box-shadow: 0 0 20px var(--qr-glow), inset 0 0 15px rgba(255, 255, 255, 0.03);
-  animation: qr-box-glow 2s infinite alternate ease-in-out;
+  /* No box-shadow by default; animated glow is opt-in below */
   cursor: pointer;
   pointer-events: auto;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+/* Hover: slightly brighter border, no external glow */
+.qr-radar-box:hover .qr-radar-box-frame {
+  border-color: var(--qr-color);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* Glow animation: ONLY an inner background pulse on the QR area — no external bloom */
+.qr-radar-box-frame {
+  animation: qr-bg-pulse 2.4s infinite alternate ease-in-out;
 }
 
 .no-glow .qr-radar-box-frame {
   animation: none !important;
-  box-shadow: none !important;
+  background: var(--qr-bg-tint) !important;
 }
 
-.qr-radar-box:hover .qr-radar-box-frame {
-  border-color: var(--qr-color);
-  box-shadow: 0 0 28px var(--qr-glow), inset 0 0 20px rgba(255, 255, 255, 0.05);
-}
-
-/* Mini Badge in Top Corner of Frame */
-.qr-radar-mini-badge {
-  position: absolute;
-  top: -12px;
-  left: 8px;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  background: rgba(13, 17, 23, 0.94);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid var(--qr-color);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45), 0 0 10px var(--qr-glow);
-  border-radius: 9999px;
-  padding: 2px 8px;
-  color: var(--qr-color);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.4px;
-  pointer-events: auto;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.qr-radar-mini-badge:hover {
-  border-color: var(--qr-color);
-  box-shadow: 0 4px 16px var(--qr-glow);
-  transform: scale(1.05);
-}
-
-.qr-mini-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--qr-color);
-  box-shadow: 0 0 6px var(--qr-color);
-}
-
-/* Corner Reticles for High-Tech feel */
+/* Corner Reticles — sharp, precise, slightly bigger */
 .qr-radar-corner {
   position: absolute;
-  width: 14px;
-  height: 14px;
-  border-color: var(--qr-color-sec);
+  width: 16px;
+  height: 16px;
+  border-color: var(--qr-color);
   border-style: solid;
   pointer-events: none;
 }
@@ -162,79 +137,119 @@
 }
 
 .qr-radar-corner-tl {
-  top: -10px;
-  left: -10px;
-  border-width: 3px 0 0 3px;
+  top: -9px;
+  left: -9px;
+  border-width: 2.5px 0 0 2.5px;
   border-top-left-radius: 4px;
 }
 
 .qr-radar-corner-tr {
-  top: -10px;
-  right: -10px;
-  border-width: 3px 3px 0 0;
+  top: -9px;
+  right: -9px;
+  border-width: 2.5px 2.5px 0 0;
   border-top-right-radius: 4px;
 }
 
 .qr-radar-corner-bl {
-  bottom: -10px;
-  left: -10px;
-  border-width: 0 0 3px 3px;
+  bottom: -9px;
+  left: -9px;
+  border-width: 0 0 2.5px 2.5px;
   border-bottom-left-radius: 4px;
 }
 
 .qr-radar-corner-br {
-  bottom: -10px;
-  right: -10px;
-  border-width: 0 3px 3px 0;
+  bottom: -9px;
+  right: -9px;
+  border-width: 0 2.5px 2.5px 0;
   border-bottom-right-radius: 4px;
+}
+
+/* Mini Badge — minimal, no external glow */
+.qr-radar-mini-badge {
+  position: absolute;
+  top: -13px;
+  left: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(13, 17, 23, 0.92);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--qr-color);
+  border-radius: 9999px;
+  padding: 2px 9px;
+  color: var(--qr-color);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  pointer-events: auto;
+  cursor: pointer;
+  /* Shadow: only subtle dark drop shadow, no color bloom */
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.qr-radar-mini-badge:hover {
+  opacity: 0.9;
+  transform: translateY(-1px);
+}
+
+/* Status dot — solid color, no glow ring */
+.qr-mini-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--qr-color);
+  flex-shrink: 0;
 }
 
 /* Floating Detailed HUD Card */
 .qr-radar-hud-card {
   position: absolute;
-  top: calc(100% + 14px);
+  top: calc(100% + 12px);
   left: 50%;
-  transform: translateX(-50%) translateY(6px) scale(0.95);
+  transform: translateX(-50%) translateY(6px) scale(0.96);
   min-width: 260px;
-  max-width: 380px;
-  background: rgba(13, 17, 23, 0.94);
+  max-width: 360px;
+  background: rgba(10, 14, 20, 0.95);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  box-shadow: 0 14px 44px rgba(0, 0, 0, 0.7), 0 0 24px var(--qr-glow);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  /* Neutral dark shadow only — no color bloom */
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.75), 0 1px 0 rgba(255, 255, 255, 0.06) inset;
   border-radius: 14px;
   padding: 12px 14px;
   color: #f0f6fc;
   pointer-events: none;
   opacity: 0;
   visibility: hidden;
-  transition: opacity 0.22s cubic-bezier(0.16, 1, 0.3, 1),
-              transform 0.22s cubic-bezier(0.16, 1, 0.3, 1),
-              visibility 0.22s;
+  transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+              transform 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+              visibility 0.2s;
   z-index: 20;
 }
 
-/* Hover bridge */
+/* Hover bridge — invisible area to keep card open when moving mouse to it */
 .qr-radar-hud-card::before {
   content: '';
   position: absolute;
-  top: -16px;
+  top: -14px;
   left: 0;
   right: 0;
-  height: 16px;
+  height: 14px;
   pointer-events: auto;
 }
 
-/* Flip HUD above if near bottom edge of screen */
+/* Flip HUD above if near bottom edge */
 .qr-radar-hud-card.qr-flipped {
   top: auto;
-  bottom: calc(100% + 14px);
-  transform: translateX(-50%) translateY(-6px) scale(0.95);
+  bottom: calc(100% + 12px);
+  transform: translateX(-50%) translateY(-6px) scale(0.96);
 }
 
 .qr-radar-hud-card.qr-flipped::before {
   top: auto;
-  bottom: -16px;
+  bottom: -14px;
 }
 
 /* Display Modes */
@@ -266,57 +281,71 @@
   align-items: center;
   justify-content: space-between;
   margin-bottom: 8px;
+  gap: 8px;
 }
 
 .qr-radar-type-badge {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   padding: 2px 8px;
   border-radius: 6px;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.6px;
+  flex-shrink: 0;
 }
 
 .qr-badge-url {
-  background: rgba(56, 189, 248, 0.2);
+  background: rgba(56, 189, 248, 0.15);
   color: #38bdf8;
-  border: 1px solid rgba(56, 189, 248, 0.3);
+  border: 1px solid rgba(56, 189, 248, 0.25);
 }
 
 .qr-badge-wifi {
-  background: rgba(74, 222, 128, 0.2);
+  background: rgba(74, 222, 128, 0.15);
   color: #4ade80;
-  border: 1px solid rgba(74, 222, 128, 0.3);
+  border: 1px solid rgba(74, 222, 128, 0.25);
 }
 
 .qr-badge-email {
-  background: rgba(251, 146, 60, 0.2);
+  background: rgba(251, 146, 60, 0.15);
   color: #fb923c;
-  border: 1px solid rgba(251, 146, 60, 0.3);
+  border: 1px solid rgba(251, 146, 60, 0.25);
 }
 
 .qr-badge-phone {
-  background: rgba(167, 139, 250, 0.2);
+  background: rgba(167, 139, 250, 0.15);
   color: #a78bfa;
-  border: 1px solid rgba(167, 139, 250, 0.3);
+  border: 1px solid rgba(167, 139, 250, 0.25);
+}
+
+.qr-badge-sms {
+  background: rgba(251, 191, 36, 0.15);
+  color: #fbbf24;
+  border: 1px solid rgba(251, 191, 36, 0.25);
+}
+
+.qr-badge-geo {
+  background: rgba(52, 211, 153, 0.15);
+  color: #34d399;
+  border: 1px solid rgba(52, 211, 153, 0.25);
 }
 
 .qr-badge-text {
-  background: rgba(148, 163, 184, 0.2);
+  background: rgba(148, 163, 184, 0.15);
   color: #94a3b8;
-  border: 1px solid rgba(148, 163, 184, 0.3);
+  border: 1px solid rgba(148, 163, 184, 0.25);
 }
 
 .qr-radar-hud-body {
-  font-size: 13px;
-  line-height: 1.45;
-  color: #e6edf3;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #c9d1d9;
   margin-bottom: 12px;
   word-break: break-all;
-  max-height: 90px;
+  max-height: 80px;
   overflow-y: auto;
 }
 
@@ -346,42 +375,45 @@
   font-weight: 600;
   border: none;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: filter 0.15s ease, transform 0.15s ease, background 0.15s ease;
   text-decoration: none;
 }
 
+/* Primary button: solid accent color, no glow shadow */
 .qr-btn-primary {
-  background: linear-gradient(135deg, var(--qr-color) 0%, #4facfe 100%);
-  color: #031326;
-  box-shadow: 0 4px 12px var(--qr-glow);
+  background: var(--qr-color);
+  color: #020d18;
+  font-weight: 700;
 }
 
 .qr-btn-primary:hover {
-  filter: brightness(1.1);
+  filter: brightness(1.12);
   transform: translateY(-1px);
-  box-shadow: 0 6px 16px var(--qr-glow);
 }
 
+/* Secondary button: ghost style */
 .qr-btn-secondary {
-  background: rgba(255, 255, 255, 0.08);
-  color: #f0f6fc;
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.07);
+  color: #e6edf3;
+  border: 1px solid rgba(255, 255, 255, 0.12);
 }
 
 .qr-btn-secondary:hover {
-  background: rgba(255, 255, 255, 0.15);
-  border-color: rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.13);
+  border-color: rgba(255, 255, 255, 0.22);
   transform: translateY(-1px);
 }
 
 .qr-btn.qr-btn-copied {
-  background: #238636;
-  color: #ffffff;
-  border: 1px solid #2ea043;
+  background: #1c6b2c;
+  color: #4ade80;
+  border: 1px solid #2d9948;
 }
 
 /* Animations */
-@keyframes qr-box-glow {
-  0% { border-color: var(--qr-color); box-shadow: 0 0 15px var(--qr-glow); }
-  100% { border-color: var(--qr-color-sec); box-shadow: 0 0 25px var(--qr-glow); }
+
+/* QR background pulse — only the inner tint animates, no external bloom */
+@keyframes qr-bg-pulse {
+  0%   { background: var(--qr-bg-tint); }
+  100% { background: var(--qr-bg-tint-strong); }
 }
