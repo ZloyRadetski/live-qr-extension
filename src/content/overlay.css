@@ -164,43 +164,132 @@
   border-bottom-right-radius: 4px;
 }
 
-/* Mini Badge — minimal, no external glow */
+/* Mini Badge — compact, sleek, perched above frame without obscuring QR */
 .qr-radar-mini-badge {
   position: absolute;
-  top: -13px;
-  left: 8px;
+  top: -15px;
+  left: 4px;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  background: rgba(13, 17, 23, 0.92);
+  gap: 4px;
+  background: rgba(13, 17, 23, 0.94);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   border: 1px solid var(--qr-color);
   border-radius: 9999px;
-  padding: 2px 9px;
+  padding: 1px 6px;
   color: var(--qr-color);
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
-  letter-spacing: 0.5px;
+  line-height: 14px;
+  letter-spacing: 0.3px;
   pointer-events: auto;
   cursor: pointer;
-  /* Shadow: only subtle dark drop shadow, no color bloom */
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
-  transition: opacity 0.15s ease, transform 0.15s ease;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  z-index: 5;
 }
 
 .qr-radar-mini-badge:hover {
-  opacity: 0.9;
+  opacity: 0.95;
   transform: translateY(-1px);
 }
 
 /* Status dot — solid color, no glow ring */
 .qr-mini-dot {
-  width: 5px;
-  height: 5px;
+  width: 4.5px;
+  height: 4.5px;
   border-radius: 50%;
   background: var(--qr-color);
   flex-shrink: 0;
+}
+
+/* =========================================================
+   Adaptive Scaling for Small & Tiny QR Codes
+   Prevents oversized corners and badges from covering small QRs
+   ========================================================= */
+
+/* Small QR Codes (60px - 110px) */
+.qr-small .qr-radar-box-frame {
+  inset: -4px;
+  border-radius: 6px;
+}
+
+.qr-small .qr-radar-corner {
+  width: 10px;
+  height: 10px;
+}
+
+.qr-small .qr-radar-corner-tl { top: -6px; left: -6px; border-width: 2px 0 0 2px; }
+.qr-small .qr-radar-corner-tr { top: -6px; right: -6px; border-width: 2px 2px 0 0; }
+.qr-small .qr-radar-corner-bl { bottom: -6px; left: -6px; border-width: 0 0 2px 2px; }
+.qr-small .qr-radar-corner-br { bottom: -6px; right: -6px; border-width: 0 2px 2px 0; }
+
+.qr-small .qr-radar-mini-badge {
+  top: -13px;
+  left: 2px;
+  padding: 0 5px;
+  font-size: 8px;
+  line-height: 12px;
+  gap: 3px;
+}
+
+.qr-small .qr-mini-dot {
+  width: 4px;
+  height: 4px;
+}
+
+/* Tiny QR Codes (< 60px, e.g. 30px-55px) */
+.qr-tiny .qr-radar-box-frame {
+  inset: -3px;
+  border-radius: 4px;
+  border-width: 1px;
+}
+
+.qr-tiny .qr-radar-corner {
+  width: 7px;
+  height: 7px;
+}
+
+.qr-tiny .qr-radar-corner-tl { top: -4px; left: -4px; border-width: 1.5px 0 0 1.5px; }
+.qr-tiny .qr-radar-corner-tr { top: -4px; right: -4px; border-width: 1.5px 1.5px 0 0; }
+.qr-tiny .qr-radar-corner-bl { bottom: -4px; left: -4px; border-width: 0 0 1.5px 1.5px; }
+.qr-tiny .qr-radar-corner-br { bottom: -4px; right: -4px; border-width: 0 1.5px 1.5px 0; }
+
+/* On tiny QR codes, hide text label to prevent covering the QR area! */
+.qr-tiny .qr-radar-mini-badge {
+  top: -10px;
+  left: 0;
+  width: 10px;
+  height: 10px;
+  padding: 0;
+  justify-content: center;
+  border-radius: 50%;
+}
+
+.qr-tiny .qr-mini-type {
+  display: none;
+}
+
+.qr-tiny .qr-mini-dot {
+  width: 4px;
+  height: 4px;
+}
+
+/* On hover over tiny badge, expand smoothly to show label */
+.qr-tiny .qr-radar-mini-badge:hover {
+  width: auto;
+  height: auto;
+  border-radius: 9999px;
+  padding: 0 5px;
+  font-size: 8px;
+  line-height: 12px;
+  gap: 3px;
+}
+
+.qr-tiny .qr-radar-mini-badge:hover .qr-mini-type {
+  display: inline;
 }
 
 /* Floating Detailed HUD Card */

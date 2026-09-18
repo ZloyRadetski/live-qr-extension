@@ -184,6 +184,22 @@ class QRBoxTracker {
       this.boxElement.style.height = `${Math.round(height)}px`;
     }
 
+    // Adaptive sizing for small/tiny QR codes to keep overlays elegant and proportional
+    const effW = width || this.lastWidth || 0;
+    const effH = height || this.lastHeight || 0;
+    const minDim = Math.min(effW, effH);
+    if (minDim > 0) {
+      if (minDim < 60) {
+        this.boxElement.classList.add('qr-tiny');
+        this.boxElement.classList.remove('qr-small');
+      } else if (minDim < 110) {
+        this.boxElement.classList.add('qr-small');
+        this.boxElement.classList.remove('qr-tiny');
+      } else {
+        this.boxElement.classList.remove('qr-small', 'qr-tiny');
+      }
+    }
+
     // Flip HUD card if too close to bottom of screen (using viewport coordinates + hysteresis)
     const scrollY = typeof window !== 'undefined' ? (window.pageYOffset || window.scrollY || 0) : 0;
     const viewportY = isFixed ? y : (y - scrollY);
@@ -346,13 +362,13 @@ class QRBoxTracker {
     // Update mini badge label on the frame
     if (this.miniBadge) {
       const typeLabels = {
-        url: '🔗 LINK',
-        wifi: '📶 WIFI',
-        email: '📧 EMAIL',
-        phone: '📞 CALL',
-        sms: '💬 SMS',
-        geo: '📍 GEO',
-        text: '📝 TEXT'
+        url: 'URL',
+        wifi: 'WiFi',
+        email: 'Mail',
+        phone: 'Tel',
+        sms: 'SMS',
+        geo: 'Geo',
+        text: 'Text'
       };
       const typeText = typeLabels[parsed.type] || 'QR';
       const typeSpan = this.miniBadge.querySelector('.qr-mini-type');

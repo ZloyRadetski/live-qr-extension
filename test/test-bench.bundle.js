@@ -12617,6 +12617,20 @@
         this.lastHeight = height;
         this.boxElement.style.height = `${Math.round(height)}px`;
       }
+      const effW = width || this.lastWidth || 0;
+      const effH = height || this.lastHeight || 0;
+      const minDim = Math.min(effW, effH);
+      if (minDim > 0) {
+        if (minDim < 60) {
+          this.boxElement.classList.add("qr-tiny");
+          this.boxElement.classList.remove("qr-small");
+        } else if (minDim < 110) {
+          this.boxElement.classList.add("qr-small");
+          this.boxElement.classList.remove("qr-tiny");
+        } else {
+          this.boxElement.classList.remove("qr-small", "qr-tiny");
+        }
+      }
       const scrollY = typeof window !== "undefined" ? window.pageYOffset || window.scrollY || 0 : 0;
       const viewportY = isFixed ? y : y - scrollY;
       const spaceBelow = (typeof window !== "undefined" ? window.innerHeight : 1080) - (viewportY + (height || 0));
@@ -12745,13 +12759,13 @@
       }
       if (this.miniBadge) {
         const typeLabels = {
-          url: "\u{1F517} LINK",
-          wifi: "\u{1F4F6} WIFI",
-          email: "\u{1F4E7} EMAIL",
-          phone: "\u{1F4DE} CALL",
-          sms: "\u{1F4AC} SMS",
-          geo: "\u{1F4CD} GEO",
-          text: "\u{1F4DD} TEXT"
+          url: "URL",
+          wifi: "WiFi",
+          email: "Mail",
+          phone: "Tel",
+          sms: "SMS",
+          geo: "Geo",
+          text: "Text"
         };
         const typeText = typeLabels[parsed.type] || "QR";
         const typeSpan = this.miniBadge.querySelector(".qr-mini-type");
