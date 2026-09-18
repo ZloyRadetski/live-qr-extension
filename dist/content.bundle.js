@@ -10473,6 +10473,7 @@
     let width = 0;
     let height = 0;
     if (el.tagName === "IMG") {
+      if (el._qrRadarTainted) return [];
       if (!el.complete || !el.naturalWidth || !el.naturalHeight) return [];
       width = el.naturalWidth;
       height = el.naturalHeight;
@@ -10496,9 +10497,11 @@
         }));
       }
     } else if (el.tagName === "CANVAS") {
+      if (el._qrRadarTainted) return [];
       width = el.width;
       height = el.height;
     } else if (el.tagName === "VIDEO") {
+      if (el._qrRadarTainted) return [];
       if (el.readyState < 2 || !el.videoWidth || !el.videoHeight) return [];
       width = el.videoWidth;
       height = el.videoHeight;
@@ -10577,6 +10580,9 @@
       }
       return found;
     } catch {
+      el._qrRadarTainted = true;
+      offscreenCanvas = null;
+      offscreenCtx = null;
       return [];
     }
   }
@@ -10593,6 +10599,26 @@
       }
     }
     return allResults;
+  }
+  function getVisibleVideoRects() {
+    if (typeof document === "undefined") return [];
+    const videos = Array.from(document.querySelectorAll("video"));
+    const rects = [];
+    for (const v of videos) {
+      if (isElementInViewport(v)) {
+        const r = v.getBoundingClientRect();
+        if (r.width > 20 && r.height > 20) {
+          rects.push({
+            left: Math.round(r.left),
+            top: Math.round(r.top),
+            width: Math.round(r.width),
+            height: Math.round(r.height),
+            isTainted: !!v._qrRadarTainted
+          });
+        }
+      }
+    }
+    return rects;
   }
 
   // src/content/overlay.js
@@ -10759,7 +10785,8 @@
           return;
         }
       }
-      if (this.anchorElement && this.anchorElement.tagName === "IMG" && this.anchorElement.isConnected && this.anchorOffset) {
+      const isTrackedMedia = this.anchorElement && (this.anchorElement.tagName === "IMG" || this.anchorElement.tagName === "VIDEO");
+      if (isTrackedMedia && this.anchorElement.isConnected && this.anchorOffset) {
         const rect = this.anchorElement.getBoundingClientRect();
         const scrollX = typeof window !== "undefined" ? window.pageXOffset || window.scrollX || 0 : 0;
         const scrollY = typeof window !== "undefined" ? window.pageYOffset || window.scrollY || 0 : 0;
@@ -10900,6 +10927,7 @@
       this.scrollTimer = null;
       this.audioCtx = null;
       this.lastChimeTime = 0;
+      this.fullscreenHandler = null;
     }
     /**
      * Applies CSS classes for themes, display mode, and animations to root overlay.
@@ -10927,17 +10955,40 @@
       }
     }
     /**
+     * Sets up fullscreen listeners to keep overlay visible inside video players in fullscreen mode (e.g. YouTube).
+     */
+    setupFullscreenListener() {
+      if (this.fullscreenHandler || typeof document === "undefined") return;
+      this.fullscreenHandler = () => {
+        const target = document.fullscreenElement || document.documentElement || document.body;
+        if (this.root && target && this.root.parentElement !== target) {
+          target.appendChild(this.root);
+        }
+        for (const tracker of this.trackers.values()) {
+          if (tracker.anchorElement) {
+            tracker.lastDocLeft = null;
+            tracker.lastDocTop = null;
+          }
+        }
+      };
+      document.addEventListener("fullscreenchange", this.fullscreenHandler);
+      document.addEventListener("webkitfullscreenchange", this.fullscreenHandler);
+    }
+    /**
      * Initializes overlay DOM structure.
      */
     mount() {
-      if (this.root) return;
-      this.root = document.createElement("div");
-      this.root.id = "qr-radar-root";
-      this.applySettingsClasses();
-      const mountTarget = document.documentElement || document.body;
-      if (mountTarget) {
+      if (this.root && this.root.isConnected) return;
+      if (!this.root) {
+        this.root = document.createElement("div");
+        this.root.id = "qr-radar-root";
+        this.applySettingsClasses();
+      }
+      const mountTarget = document.fullscreenElement || document.documentElement || document.body;
+      if (mountTarget && this.root.parentElement !== mountTarget) {
         mountTarget.appendChild(this.root);
       }
+      this.setupFullscreenListener();
     }
     /**
      * Synchronizes detected items (from either DOM scanner or Screen capture).
@@ -11214,6 +11265,11 @@
         tracker.destroy();
       }
       this.trackers.clear();
+      if (this.fullscreenHandler && typeof document !== "undefined") {
+        document.removeEventListener("fullscreenchange", this.fullscreenHandler);
+        document.removeEventListener("webkitfullscreenchange", this.fullscreenHandler);
+        this.fullscreenHandler = null;
+      }
       if (this.root && this.root.parentNode) {
         this.root.parentNode.removeChild(this.root);
       }
@@ -11232,6 +11288,20 @@
   var domScanInterval = null;
   var domObserver = null;
   var domMutationDebounce = null;
+  function reportVisibleVideoRects() {
+    const rects = getVisibleVideoRects();
+    try {
+      browser.runtime.sendMessage({
+        type: "VIDEO_RECTS_UPDATE",
+        rects,
+        dpr: window.devicePixelRatio || 1,
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight
+      }).catch(() => {
+      });
+    } catch {
+    }
+  }
   function getDomScanIntervalMs(scanRate) {
     const fps = Math.max(1, Math.min(120, scanRate || 12));
     return Math.max(20, Math.round(1e3 / fps));
@@ -11250,6 +11320,7 @@
     if (!isMounted) return;
     const settings = await getSettings();
     if (settings.scanDomImages === false) return;
+    reportVisibleVideoRects();
     const results = scanVisibleDomImages();
     if (Array.isArray(results)) {
       if (results.length > 0) {
@@ -11279,6 +11350,7 @@
     domObserver = new MutationObserver(() => {
       clearTimeout(domMutationDebounce);
       domMutationDebounce = setTimeout(() => {
+        reportVisibleVideoRects();
         triggerDomScan();
       }, 30);
     });
@@ -11313,6 +11385,7 @@
     });
     overlay.mount();
     isMounted = true;
+    reportVisibleVideoRects();
     if (settings.scanDomImages !== false) {
       setupDomObserver();
       triggerDomScan();
@@ -11420,14 +11493,33 @@
         });
       } catch {
       }
+      reportVisibleVideoRects();
       triggerDomScan();
     }, 140);
   }, { passive: true });
   window.addEventListener("resize", () => {
+    reportVisibleVideoRects();
     if (overlay) {
       overlay.onScroll();
     }
   }, { passive: true });
+  function onSpaNavigation() {
+    getSettings().then((settings) => {
+      if (settings && settings.globalActive) {
+        if (!overlay) {
+          initOverlay();
+        } else {
+          reportVisibleVideoRects();
+          triggerDomScan();
+        }
+      }
+    }).catch(() => {
+    });
+  }
+  window.addEventListener("yt-navigate-finish", onSpaNavigation);
+  document.addEventListener("yt-navigate-finish", onSpaNavigation);
+  window.addEventListener("popstate", onSpaNavigation);
+  window.addEventListener("hashchange", onSpaNavigation);
   window.addEventListener("keydown", (e) => {
     if (e.altKey && (e.key === "q" || e.key === "\u0439" || e.key === "Q" || e.key === "\u0419")) {
       e.preventDefault();
@@ -11437,5 +11529,11 @@
       } catch {
       }
     }
+  });
+  getSettings().then((settings) => {
+    if (settings && settings.globalActive) {
+      initOverlay();
+    }
+  }).catch(() => {
   });
 })();

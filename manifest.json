@@ -32,6 +32,7 @@
   ],
   "permissions": [
     "activeTab",
+    "tabs",
     "storage",
     "scripting"
   ],
@@ -49,7 +50,7 @@
   },
   "browser_specific_settings": {
     "gecko": {
-      "id": "qr-radar@antigravity.addon",
+      "id": "qr-radar@radetski.addon",
       "strict_min_version": "109.0"
     }
   }

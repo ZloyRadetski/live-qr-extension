@@ -221,8 +221,9 @@ class QRBoxTracker {
       }
     }
 
-    // High-frequency sync for static image elements moving or resizing on the page
-    if (this.anchorElement && this.anchorElement.tagName === 'IMG' && this.anchorElement.isConnected && this.anchorOffset) {
+    // High-frequency sync for media elements (IMG, VIDEO) moving or resizing on the page
+    const isTrackedMedia = this.anchorElement && (this.anchorElement.tagName === 'IMG' || this.anchorElement.tagName === 'VIDEO');
+    if (isTrackedMedia && this.anchorElement.isConnected && this.anchorOffset) {
       const rect = this.anchorElement.getBoundingClientRect();
       const scrollX = typeof window !== 'undefined' ? (window.pageXOffset || window.scrollX || 0) : 0;
       const scrollY = typeof window !== 'undefined' ? (window.pageYOffset || window.scrollY || 0) : 0;
@@ -388,6 +389,7 @@ export class QROverlayManager {
     this.scrollTimer = null;
     this.audioCtx = null;
     this.lastChimeTime = 0;
+    this.fullscreenHandler = null;
   }
 
   /**
@@ -418,19 +420,47 @@ export class QROverlayManager {
   }
 
   /**
+   * Sets up fullscreen listeners to keep overlay visible inside video players in fullscreen mode (e.g. YouTube).
+   */
+  setupFullscreenListener() {
+    if (this.fullscreenHandler || typeof document === 'undefined') return;
+
+    this.fullscreenHandler = () => {
+      const target = document.fullscreenElement || document.documentElement || document.body;
+      if (this.root && target && this.root.parentElement !== target) {
+        target.appendChild(this.root);
+      }
+      // Force position update on all active trackers
+      for (const tracker of this.trackers.values()) {
+        if (tracker.anchorElement) {
+          tracker.lastDocLeft = null;
+          tracker.lastDocTop = null;
+        }
+      }
+    };
+
+    document.addEventListener('fullscreenchange', this.fullscreenHandler);
+    document.addEventListener('webkitfullscreenchange', this.fullscreenHandler);
+  }
+
+  /**
    * Initializes overlay DOM structure.
    */
   mount() {
-    if (this.root) return;
+    if (this.root && this.root.isConnected) return;
 
-    this.root = document.createElement('div');
-    this.root.id = 'qr-radar-root';
-    this.applySettingsClasses();
+    if (!this.root) {
+      this.root = document.createElement('div');
+      this.root.id = 'qr-radar-root';
+      this.applySettingsClasses();
+    }
 
-    const mountTarget = document.documentElement || document.body;
-    if (mountTarget) {
+    const mountTarget = document.fullscreenElement || document.documentElement || document.body;
+    if (mountTarget && this.root.parentElement !== mountTarget) {
       mountTarget.appendChild(this.root);
     }
+
+    this.setupFullscreenListener();
   }
 
   /**
@@ -771,6 +801,12 @@ export class QROverlayManager {
       tracker.destroy();
     }
     this.trackers.clear();
+
+    if (this.fullscreenHandler && typeof document !== 'undefined') {
+      document.removeEventListener('fullscreenchange', this.fullscreenHandler);
+      document.removeEventListener('webkitfullscreenchange', this.fullscreenHandler);
+      this.fullscreenHandler = null;
+    }
 
     if (this.root && this.root.parentNode) {
       this.root.parentNode.removeChild(this.root);

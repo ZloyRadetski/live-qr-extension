@@ -5,13 +5,29 @@
 
 import { QROverlayManager } from './overlay.js';
 import { getSettings } from '../utils/storage.js';
-import { scanVisibleDomImages } from '../utils/dom-scanner.js';
+import { scanVisibleDomImages, getVisibleVideoRects } from '../utils/dom-scanner.js';
 
 let overlay = null;
 let isMounted = false;
 let domScanInterval = null;
 let domObserver = null;
 let domMutationDebounce = null;
+
+/**
+ * Reports visible <video> element bounding rects to background worker for high-res crop scanning.
+ */
+function reportVisibleVideoRects() {
+  const rects = getVisibleVideoRects();
+  try {
+    browser.runtime.sendMessage({
+      type: 'VIDEO_RECTS_UPDATE',
+      rects,
+      dpr: window.devicePixelRatio || 1,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight
+    }).catch(() => {});
+  } catch {}
+}
 
 /**
  * Computes interval for in-page DOM scanner from scanRate FPS setting.
@@ -46,6 +62,9 @@ async function triggerDomScan() {
   const settings = await getSettings();
   if (settings.scanDomImages === false) return;
 
+  // Report any visible video player viewports to background service
+  reportVisibleVideoRects();
+
   const results = scanVisibleDomImages();
   if (Array.isArray(results)) {
     if (results.length > 0) {
@@ -72,7 +91,7 @@ async function triggerDomScan() {
 }
 
 /**
- * Sets up MutationObserver to detect dynamically added images.
+ * Sets up MutationObserver to detect dynamically added images and video players.
  */
 function setupDomObserver() {
   if (domObserver || typeof MutationObserver === 'undefined') return;
@@ -80,6 +99,7 @@ function setupDomObserver() {
   domObserver = new MutationObserver(() => {
     clearTimeout(domMutationDebounce);
     domMutationDebounce = setTimeout(() => {
+      reportVisibleVideoRects();
       triggerDomScan();
     }, 30);
   });
@@ -121,6 +141,9 @@ async function initOverlay() {
 
   overlay.mount();
   isMounted = true;
+
+  // Immediately report video rects to background scanner
+  reportVisibleVideoRects();
 
   // Start DOM scanning features if enabled
   if (settings.scanDomImages !== false) {
@@ -246,16 +269,37 @@ window.addEventListener('scroll', () => {
     try {
       browser.runtime.sendMessage({ type: 'SCROLL_END' }).catch(() => {});
     } catch {}
+    reportVisibleVideoRects();
     triggerDomScan();
   }, 140);
 }, { passive: true });
 
 // Resize listener
 window.addEventListener('resize', () => {
+  reportVisibleVideoRects();
   if (overlay) {
     overlay.onScroll();
   }
 }, { passive: true });
+
+// SPA Navigation support (YouTube yt-navigate-finish, popstate, hashchange)
+function onSpaNavigation() {
+  getSettings().then((settings) => {
+    if (settings && settings.globalActive) {
+      if (!overlay) {
+        initOverlay();
+      } else {
+        reportVisibleVideoRects();
+        triggerDomScan();
+      }
+    }
+  }).catch(() => {});
+}
+
+window.addEventListener('yt-navigate-finish', onSpaNavigation);
+document.addEventListener('yt-navigate-finish', onSpaNavigation);
+window.addEventListener('popstate', onSpaNavigation);
+window.addEventListener('hashchange', onSpaNavigation);
 
 // Fallback in-page shortcut (Alt+Q)
 window.addEventListener('keydown', (e) => {
@@ -266,3 +310,10 @@ window.addEventListener('keydown', (e) => {
     } catch {}
   }
 });
+
+// Auto-initialize on page load if scanner is already globally active
+getSettings().then((settings) => {
+  if (settings && settings.globalActive) {
+    initOverlay();
+  }
+}).catch(() => {});

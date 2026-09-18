@@ -82,6 +82,7 @@ export function scanMediaElement(el, maxDimension = 1200) {
   let height = 0;
 
   if (el.tagName === 'IMG') {
+    if (el._qrRadarTainted) return [];
     if (!el.complete || !el.naturalWidth || !el.naturalHeight) return [];
     width = el.naturalWidth;
     height = el.naturalHeight;
@@ -106,9 +107,11 @@ export function scanMediaElement(el, maxDimension = 1200) {
       }));
     }
   } else if (el.tagName === 'CANVAS') {
+    if (el._qrRadarTainted) return [];
     width = el.width;
     height = el.height;
   } else if (el.tagName === 'VIDEO') {
+    if (el._qrRadarTainted) return [];
     if (el.readyState < 2 || !el.videoWidth || !el.videoHeight) return [];
     width = el.videoWidth;
     height = el.videoHeight;
@@ -203,7 +206,11 @@ export function scanMediaElement(el, maxDimension = 1200) {
 
     return found;
   } catch {
-    // Cross-origin image (CORS) or tainted canvas - ignore safely
+    // Cross-origin image (CORS) or tainted canvas - safely isolate
+    el._qrRadarTainted = true;
+    // Reset canvas singleton so other elements are not poisoned
+    offscreenCanvas = null;
+    offscreenCtx = null;
     return [];
   }
 }
@@ -228,4 +235,33 @@ export function scanVisibleDomImages() {
   }
 
   return allResults;
+}
+
+/**
+ * Collects bounding rects for all visible HTML5 <video> elements in the viewport.
+ * Used for targeted high-resolution screen capture decoding.
+ * @returns {Array<{ left: number, top: number, width: number, height: number, isTainted: boolean }>}
+ */
+export function getVisibleVideoRects() {
+  if (typeof document === 'undefined') return [];
+
+  const videos = Array.from(document.querySelectorAll('video'));
+  const rects = [];
+
+  for (const v of videos) {
+    if (isElementInViewport(v)) {
+      const r = v.getBoundingClientRect();
+      if (r.width > 20 && r.height > 20) {
+        rects.push({
+          left: Math.round(r.left),
+          top: Math.round(r.top),
+          width: Math.round(r.width),
+          height: Math.round(r.height),
+          isTainted: !!v._qrRadarTainted
+        });
+      }
+    }
+  }
+
+  return rects;
 }

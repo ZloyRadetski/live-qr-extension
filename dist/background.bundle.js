@@ -10313,6 +10313,8 @@
   var canvas = null;
   var ctx = null;
   var cachedImg = null;
+  var cropCanvas = null;
+  var cropCtx = null;
   function getCanvas() {
     if (!canvas && typeof document !== "undefined") {
       canvas = document.createElement("canvas");
@@ -10321,11 +10323,82 @@
     }
     return { canvas, ctx, cachedImg };
   }
-  async function decodeDataUrl(dataUrl, maxW = 1080) {
+  function getCropCanvas() {
+    if (!cropCanvas && typeof document !== "undefined") {
+      cropCanvas = document.createElement("canvas");
+      cropCtx = cropCanvas.getContext("2d", { willReadFrequently: true });
+    }
+    return { cropCanvas, cropCtx };
+  }
+  var tabVideoRects = /* @__PURE__ */ new Map();
+  function decodeVideoCrops(img, videoInfo) {
+    if (!videoInfo || !videoInfo.rects || videoInfo.rects.length === 0) return null;
+    const { cropCanvas: cCanvas, cropCtx: cCtx } = getCropCanvas();
+    if (!cCanvas || !cCtx) return null;
+    const dpr = videoInfo.dpr || 1;
+    const imgW = img.naturalWidth || img.width;
+    const imgH = img.naturalHeight || img.height;
+    const qrs = [];
+    for (const rect of videoInfo.rects) {
+      let cropX = Math.round(rect.left * dpr);
+      let cropY = Math.round(rect.top * dpr);
+      let cropW = Math.round(rect.width * dpr);
+      let cropH = Math.round(rect.height * dpr);
+      if (cropX < 0) {
+        cropW += cropX;
+        cropX = 0;
+      }
+      if (cropY < 0) {
+        cropH += cropY;
+        cropY = 0;
+      }
+      if (cropX + cropW > imgW) cropW = imgW - cropX;
+      if (cropY + cropH > imgH) cropH = imgH - cropY;
+      if (cropW < 24 || cropH < 24) continue;
+      if (cCanvas.width !== cropW || cCanvas.height !== cropH) {
+        cCanvas.width = cropW;
+        cCanvas.height = cropH;
+      }
+      cCtx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+      let imgData = cCtx.getImageData(0, 0, cropW, cropH);
+      let count = 0;
+      while (count < 4) {
+        const code = (0, import_jsqr.default)(imgData.data, cropW, cropH, { inversionAttempts: "attemptBoth" });
+        if (!code) break;
+        const loc = code.location;
+        qrs.push({
+          data: code.data,
+          location: {
+            topLeftCorner: { x: (cropX + loc.topLeftCorner.x) / dpr, y: (cropY + loc.topLeftCorner.y) / dpr },
+            topRightCorner: { x: (cropX + loc.topRightCorner.x) / dpr, y: (cropY + loc.topRightCorner.y) / dpr },
+            bottomRightCorner: { x: (cropX + loc.bottomRightCorner.x) / dpr, y: (cropY + loc.bottomRightCorner.y) / dpr },
+            bottomLeftCorner: { x: (cropX + loc.bottomLeftCorner.x) / dpr, y: (cropY + loc.bottomLeftCorner.y) / dpr }
+          }
+        });
+        count++;
+        maskQrRegion(cCtx, loc);
+        imgData = cCtx.getImageData(0, 0, cropW, cropH);
+      }
+    }
+    if (qrs.length > 0) {
+      const vw = videoInfo.viewportWidth || Math.round(imgW / dpr);
+      const vh = videoInfo.viewportHeight || Math.round(imgH / dpr);
+      return { qrs, qr: qrs[0], scanWidth: vw, scanHeight: vh, isDirectCrop: true };
+    }
+    return null;
+  }
+  async function decodeDataUrl(dataUrl, maxW = 1080, videoInfo = null) {
     const { canvas: canvas2, ctx: ctx2, cachedImg: cachedImg2 } = getCanvas();
     if (!canvas2 || !ctx2 || !cachedImg2) return null;
     return new Promise((resolve) => {
       cachedImg2.onload = () => {
+        if (videoInfo && videoInfo.rects && videoInfo.rects.length > 0) {
+          const videoResult = decodeVideoCrops(cachedImg2, videoInfo);
+          if (videoResult && videoResult.qrs && videoResult.qrs.length > 0) {
+            resolve(videoResult);
+            return;
+          }
+        }
         let w = cachedImg2.width;
         let h = cachedImg2.height;
         if (w > maxW) {
@@ -10398,20 +10471,21 @@
         }
         const resolution = settings.scanResolution || "1080";
         let maxW = 1080;
-        let quality = 75;
+        let quality = 92;
         if (resolution === "720") {
           maxW = 720;
-          quality = 65;
+          quality = 85;
         } else if (resolution === "1440") {
           maxW = 1440;
-          quality = 80;
+          quality = 95;
         }
         const dataUrl = await browser.tabs.captureVisibleTab(tab.windowId, {
           format: "jpeg",
           quality
         });
         if (dataUrl && isGlobalActive && !isTabScrolling) {
-          const decoded = await decodeDataUrl(dataUrl, maxW);
+          const videoInfo = tabVideoRects.get(tab.id) || null;
+          const decoded = await decodeDataUrl(dataUrl, maxW, videoInfo);
           if (decoded && decoded.qrs && decoded.qrs.length > 0) {
             hasActiveQR = true;
             for (const qr of decoded.qrs) {
@@ -10501,7 +10575,7 @@
       browser.action.setBadgeText({ text: "" });
     }
   }
-  if (browser.windows && browser.windows.onFocusChanged) {
+  if (typeof browser !== "undefined" && browser.windows && browser.windows.onFocusChanged) {
     browser.windows.onFocusChanged.addListener((windowId) => {
       isWindowFocused = windowId !== browser.windows.WINDOW_ID_NONE;
       currentActiveTab = null;
@@ -10510,98 +10584,129 @@
       }
     });
   }
-  browser.tabs.onActivated.addListener(async ({ tabId }) => {
-    currentActiveTab = null;
-    if (isGlobalActive) {
-      hasActiveQR = false;
-      await ensureInjected(tabId);
-      browser.tabs.sendMessage(tabId, { type: "SCANNER_STARTED" }).catch(() => {
-      });
-    }
-  });
-  browser.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-    if (changeInfo.status === "complete" || changeInfo.url) {
+  if (typeof browser !== "undefined" && browser.tabs && browser.tabs.onActivated) {
+    browser.tabs.onActivated.addListener(async ({ tabId }) => {
       currentActiveTab = null;
-    }
-    if (isGlobalActive && changeInfo.status === "complete" && tab.active) {
-      await ensureInjected(tabId);
-      browser.tabs.sendMessage(tabId, { type: "SCANNER_STARTED" }).catch(() => {
-      });
-    }
-  });
-  browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (!message || !message.type) return;
-    switch (message.type) {
-      case "SCROLL_START": {
-        isTabScrolling = true;
-        sendResponse({ ok: true });
-        return false;
+      if (isGlobalActive) {
+        hasActiveQR = false;
+        await ensureInjected(tabId);
+        browser.tabs.sendMessage(tabId, { type: "SCANNER_STARTED" }).catch(() => {
+        });
       }
-      case "SCROLL_END": {
-        isTabScrolling = false;
-        sendResponse({ ok: true });
-        return false;
+    });
+  }
+  if (typeof browser !== "undefined" && browser.tabs && browser.tabs.onUpdated) {
+    browser.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+      if (changeInfo.status === "complete" || changeInfo.url) {
+        currentActiveTab = null;
       }
-      case "DOM_QR_DETECTED": {
-        hasActiveQR = true;
-        if (message.qrData) {
-          const parsed = classifyContent(message.qrData);
-          addScanHistory({
-            text: message.qrData,
-            type: parsed.type,
-            title: parsed.title
-          }).catch(() => {
-          });
+      if (isGlobalActive && changeInfo.status === "complete" && tab.active) {
+        await ensureInjected(tabId);
+        browser.tabs.sendMessage(tabId, { type: "SCANNER_STARTED" }).catch(() => {
+        });
+      }
+    });
+  }
+  if (typeof browser !== "undefined" && browser.tabs && browser.tabs.onRemoved) {
+    browser.tabs.onRemoved.addListener((tabId) => {
+      tabVideoRects.delete(tabId);
+      if (currentActiveTab && currentActiveTab.id === tabId) {
+        currentActiveTab = null;
+      }
+    });
+  }
+  if (typeof browser !== "undefined" && browser.runtime && browser.runtime.onMessage) {
+    browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
+      if (!message || !message.type) return;
+      switch (message.type) {
+        case "SCROLL_START": {
+          isTabScrolling = true;
+          sendResponse({ ok: true });
+          return false;
         }
-        sendResponse({ ok: true });
-        return false;
-      }
-      case "SETTINGS_UPDATED": {
-        if (message.settings) {
-          cachedSettings = message.settings;
+        case "SCROLL_END": {
+          isTabScrolling = false;
+          sendResponse({ ok: true });
+          return false;
         }
-        if (isGlobalActive) {
-          if (loopTimer) {
-            clearTimeout(loopTimer);
-            loopTimer = null;
+        case "DOM_QR_DETECTED": {
+          hasActiveQR = true;
+          if (message.qrData) {
+            const parsed = classifyContent(message.qrData);
+            addScanHistory({
+              text: message.qrData,
+              type: parsed.type,
+              title: parsed.title
+            }).catch(() => {
+            });
           }
-          globalCaptureLoop();
+          sendResponse({ ok: true });
+          return false;
         }
-        sendResponse({ ok: true });
-        return false;
+        case "VIDEO_RECTS_UPDATE": {
+          const tabId = sender?.tab?.id || currentActiveTab?.id;
+          if (tabId) {
+            tabVideoRects.set(tabId, {
+              rects: message.rects || [],
+              dpr: message.dpr || 1,
+              viewportWidth: message.viewportWidth,
+              viewportHeight: message.viewportHeight,
+              lastUpdate: Date.now()
+            });
+          }
+          sendResponse({ ok: true });
+          return false;
+        }
+        case "SETTINGS_UPDATED": {
+          if (message.settings) {
+            cachedSettings = message.settings;
+          }
+          if (isGlobalActive) {
+            if (loopTimer) {
+              clearTimeout(loopTimer);
+              loopTimer = null;
+            }
+            globalCaptureLoop();
+          }
+          sendResponse({ ok: true });
+          return false;
+        }
+        case "GET_STATUS":
+        case "GET_GLOBAL_STATUS": {
+          sendResponse({ active: isGlobalActive });
+          return false;
+        }
+        case "START_SCAN":
+        case "START_GLOBAL_SCAN": {
+          startGlobalScan().then(sendResponse);
+          return true;
+        }
+        case "STOP_SCAN":
+        case "STOP_GLOBAL_SCAN": {
+          stopGlobalScan().then(sendResponse);
+          return true;
+        }
+        case "TOGGLE_SCAN":
+        case "TOGGLE_GLOBAL_SCAN": {
+          toggleGlobalScan().then(sendResponse);
+          return true;
+        }
       }
-      case "GET_STATUS":
-      case "GET_GLOBAL_STATUS": {
-        sendResponse({ active: isGlobalActive });
-        return false;
-      }
-      case "START_SCAN":
-      case "START_GLOBAL_SCAN": {
-        startGlobalScan().then(sendResponse);
-        return true;
-      }
-      case "STOP_SCAN":
-      case "STOP_GLOBAL_SCAN": {
-        stopGlobalScan().then(sendResponse);
-        return true;
-      }
-      case "TOGGLE_SCAN":
-      case "TOGGLE_GLOBAL_SCAN": {
-        toggleGlobalScan().then(sendResponse);
-        return true;
-      }
-    }
-  });
-  if (browser.commands && browser.commands.onCommand) {
+    });
+  }
+  if (typeof browser !== "undefined" && browser.commands && browser.commands.onCommand) {
     browser.commands.onCommand.addListener(async (command) => {
       if (command === "toggle-scanner") {
         await toggleGlobalScan();
       }
     });
   }
-  getSettings().then((settings) => {
-    if (settings.globalActive) {
-      startGlobalScan();
-    }
-  });
+  if (typeof browser !== "undefined") {
+    getSettings().then((settings) => {
+      if (settings && settings.globalActive) {
+        startGlobalScan();
+      }
+    }).catch(() => {
+    });
+  }
 })();

@@ -28,3 +28,13 @@ test('jsQR accurately decodes rendered QR code image buffer', async () => {
   assert.ok(decoded.location.topLeftCorner.x >= 0);
   assert.ok(decoded.location.topRightCorner.x > decoded.location.topLeftCorner.x);
 });
+
+test('decodeVideoCrops safely handles empty or null video inputs without throwing', async () => {
+  const { decodeVideoCrops, tabVideoRects } = await import('../src/background/background.js');
+  
+  assert.equal(decodeVideoCrops(null, null), null);
+  assert.equal(decodeVideoCrops(null, { rects: [] }), null);
+  assert.equal(decodeVideoCrops({ width: 100, height: 100 }, null), null);
+  assert.equal(decodeVideoCrops({ width: 100, height: 100 }, { rects: [] }), null);
+  assert.ok(tabVideoRects instanceof Map);
+});

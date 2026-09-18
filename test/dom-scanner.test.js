@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isElementInViewport, scanMediaElement, scanVisibleDomImages } from '../src/utils/dom-scanner.js';
+import { isElementInViewport, scanMediaElement, scanVisibleDomImages, getVisibleVideoRects } from '../src/utils/dom-scanner.js';
 
 test('isElementInViewport accurately detects visible vs hidden elements', () => {
   const visibleEl = {
@@ -87,5 +87,37 @@ test('scanMediaElement safely rejects invalid, incomplete, or tiny images', () =
 test('scanVisibleDomImages safely returns empty array in non-browser environment', () => {
   const res = scanVisibleDomImages();
   assert.deepEqual(res, []);
+});
+
+test('scanMediaElement skips tainted cross-origin elements immediately', () => {
+  const taintedVideo = {
+    tagName: 'VIDEO',
+    _qrRadarTainted: true,
+    readyState: 4,
+    videoWidth: 1280,
+    videoHeight: 720
+  };
+  const taintedImg = {
+    tagName: 'IMG',
+    _qrRadarTainted: true,
+    complete: true,
+    naturalWidth: 500,
+    naturalHeight: 500
+  };
+  const taintedCanvas = {
+    tagName: 'CANVAS',
+    _qrRadarTainted: true,
+    width: 500,
+    height: 500
+  };
+
+  assert.deepEqual(scanMediaElement(taintedVideo), []);
+  assert.deepEqual(scanMediaElement(taintedImg), []);
+  assert.deepEqual(scanMediaElement(taintedCanvas), []);
+});
+
+test('getVisibleVideoRects safely returns empty array in non-browser environment', () => {
+  const rects = getVisibleVideoRects();
+  assert.deepEqual(rects, []);
 });
 
