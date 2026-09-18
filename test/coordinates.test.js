@@ -10,7 +10,8 @@ import {
   distance,
   computeRotationAngle,
   areBoundsNear,
-  maskQrRegion
+  maskQrRegion,
+  maskQrRegionInBuffer
 } from '../src/utils/coordinates.js';
 
 test('projectPoint scales coordinates correctly', () => {
@@ -127,3 +128,46 @@ test('maskQrRegion safely executes canvas operations', () => {
   // Gracefully handles nulls
   assert.doesNotThrow(() => maskQrRegion(null, null));
 });
+
+test('maskQrRegionInBuffer fills interior pixels with white in a Uint8ClampedArray', () => {
+  const W = 20;
+  const H = 20;
+  // Create a black RGBA buffer
+  const data = new Uint8ClampedArray(W * H * 4).fill(0);
+  const imageData = { data, width: W, height: H };
+
+  // A square QR at (4,4)-(14,14) with no margin
+  const loc = {
+    topLeftCorner:     { x: 4,  y: 4  },
+    topRightCorner:    { x: 14, y: 4  },
+    bottomRightCorner: { x: 14, y: 14 },
+    bottomLeftCorner:  { x: 4,  y: 14 }
+  };
+
+  maskQrRegionInBuffer(imageData, loc, 0);
+
+  // Center pixel (10, 10) must be white
+  const centerIdx = (10 * W + 10) * 4;
+  assert.equal(data[centerIdx],     255, 'R at center should be 255');
+  assert.equal(data[centerIdx + 1], 255, 'G at center should be 255');
+  assert.equal(data[centerIdx + 2], 255, 'B at center should be 255');
+  assert.equal(data[centerIdx + 3], 255, 'A at center should be 255');
+
+  // Corner pixel (0, 0) must remain black (outside polygon)
+  const cornerIdx = 0;
+  assert.equal(data[cornerIdx],     0, 'R at corner should remain 0');
+  assert.equal(data[cornerIdx + 1], 0, 'G at corner should remain 0');
+  assert.equal(data[cornerIdx + 2], 0, 'B at corner should remain 0');
+});
+
+test('maskQrRegionInBuffer is null-safe and does not throw on bad input', () => {
+  assert.doesNotThrow(() => maskQrRegionInBuffer(null, null));
+  assert.doesNotThrow(() => maskQrRegionInBuffer({ data: new Uint8ClampedArray(0), width: 0, height: 0 }, null));
+  assert.doesNotThrow(() => maskQrRegionInBuffer(null, {
+    topLeftCorner: { x: 0, y: 0 },
+    topRightCorner: { x: 10, y: 0 },
+    bottomRightCorner: { x: 10, y: 10 },
+    bottomLeftCorner: { x: 0, y: 10 }
+  }));
+});
+

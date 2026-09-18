@@ -10,7 +10,7 @@
 import jsQR from 'jsqr';
 import { getSettings, saveSettings, addScanHistory, isDomainBlacklisted } from '../utils/storage.js';
 import { classifyContent } from '../utils/parser.js';
-import { maskQrRegion } from '../utils/coordinates.js';
+import { maskQrRegion, maskQrRegionInBuffer } from '../utils/coordinates.js';
 
 let isGlobalActive = false;
 let isLoopRunning = false;
@@ -20,6 +20,7 @@ let hasActiveQR = false;
 let loopTimer = null;
 let cachedSettings = null;
 let currentActiveTab = null;
+let lastFrameHash = 0;
 
 // Track QR data already saved to history to avoid repeated writes on every frame
 const reportedQrDataThisSession = new Set();
@@ -40,10 +41,9 @@ async function getActiveTab() {
   return currentActiveTab;
 }
 
-// Reusable image & canvas buffers to avoid GC pressure
+// Reusable canvas buffers — createImageBitmap handles image decode off-thread
 let canvas = null;
 let ctx = null;
-let cachedImg = null;
 let cropCanvas = null;
 let cropCtx = null;
 
@@ -51,9 +51,8 @@ function getCanvas() {
   if (!canvas && typeof document !== 'undefined') {
     canvas = document.createElement('canvas');
     ctx = canvas.getContext('2d', { willReadFrequently: true });
-    cachedImg = new Image();
   }
-  return { canvas, ctx, cachedImg };
+  return { canvas, ctx };
 }
 
 function getCropCanvas() {
@@ -67,7 +66,26 @@ function getCropCanvas() {
 // Active video player rects reported by content scripts (tabId -> { rects, dpr, viewportWidth, viewportHeight })
 export const tabVideoRects = new Map();
 
-let fullScanCounter = 0;
+/**
+ * Fast non-cryptographic hash of a frame data URL.
+ * Samples ~256 characters spread across the string for a lightweight fingerprint.
+ * Cost: < 0.1 ms. Used to skip jsQR decode when the frame hasn't changed.
+ * @param {string} dataUrl
+ * @returns {number}
+ */
+export function computeFrameHash(dataUrl) {
+  const len = dataUrl.length;
+  if (len === 0) return 0;
+  // Sample at most 256 evenly-spaced positions
+  const step = Math.max(1, Math.floor(len / 256));
+  let hash = 0x811c9dc5; // FNV-1a 32-bit offset basis
+  for (let i = 0; i < len; i += step) {
+    hash ^= dataUrl.charCodeAt(i);
+    // FNV-1a prime multiply — keep within 32-bit int range
+    hash = (hash * 0x01000193) >>> 0;
+  }
+  return hash;
+}
 
 /**
  * High-speed targeted decode of visible video player crops directly from the full-resolution screenshot.
@@ -160,79 +178,88 @@ export function decodeVideoCrops(img, videoInfo) {
 
 /**
  * Decodes a screen capture data URL with jsQR.
- * Checks visible video player crops first at full resolution, then falls back to full-screen downsampled decoding.
+ * Uses createImageBitmap for off-thread image decode (no Image+onload overhead),
+ * then does a single getImageData readback followed by CPU-side masking between QRs.
+ * Checks visible video player crops first at full resolution, then falls back to full-screen.
  * @param {string} dataUrl
  * @param {number} [maxW=720]
  * @param {any} [videoInfo=null]
  * @returns {Promise<{ qrs: any[], qr: any, scanWidth: number, scanHeight: number } | null>}
  */
 export async function decodeDataUrl(dataUrl, maxW = 720, videoInfo = null) {
-  const { canvas, ctx, cachedImg } = getCanvas();
-  if (!canvas || !ctx || !cachedImg) return null;
+  const { canvas, ctx } = getCanvas();
+  if (!canvas || !ctx) return null;
 
-  return new Promise((resolve) => {
-    cachedImg.onload = () => {
-      // 1. High-speed targeted scan of visible video players
-      const hasVideos = videoInfo && videoInfo.rects && videoInfo.rects.length > 0;
-      if (hasVideos) {
-        const videoResult = decodeVideoCrops(cachedImg, videoInfo);
-        if (videoResult && videoResult.qrs && videoResult.qrs.length > 0) {
-          resolve(videoResult);
-          return;
-        }
+  let bitmap;
+  try {
+    // createImageBitmap decodes JPEG off the main thread — no onload callback needed
+    const resp = await fetch(dataUrl);
+    const blob = await resp.blob();
+    bitmap = await createImageBitmap(blob);
+  } catch {
+    return null;
+  }
+
+  try {
+    // 1. High-speed targeted scan of visible video players
+    const hasVideos = videoInfo && videoInfo.rects && videoInfo.rects.length > 0;
+    if (hasVideos) {
+      const videoResult = decodeVideoCrops(bitmap, videoInfo);
+      if (videoResult && videoResult.qrs && videoResult.qrs.length > 0) {
+        return videoResult;
       }
+    }
 
-      // 2. Full-screen scan fallback
-      // When video rects are active, skip full-screen fallback entirely:
-      // - Videos are handled by crop scanning above
-      // - Static page elements (images, canvases) are handled by the content DOM scanner
-      // This eliminates an entire jsQR pass (~4-8ms) per frame during video playback.
-      if (hasVideos) {
-        resolve(null);
-        return;
+    // 2. Full-screen scan fallback
+    // When video rects are active, skip full-screen fallback entirely:
+    // - Videos are handled by crop scanning above
+    // - Static page elements (images, canvases) are handled by the content DOM scanner
+    // This eliminates an entire jsQR pass (~4-8ms) per frame during video playback.
+    if (hasVideos) {
+      return null;
+    }
+
+    let w = bitmap.width;
+    let h = bitmap.height;
+
+    // Downsample to maxW (e.g. 540, 720, 1080) for optimal speed/accuracy balance
+    if (w > maxW) {
+      const ratio = maxW / w;
+      w = Math.round(w * ratio);
+      h = Math.round(h * ratio);
+    }
+
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w;
+      canvas.height = h;
+    }
+
+    ctx.drawImage(bitmap, 0, 0, w, h);
+
+    // Single GPU→CPU readback for the entire frame
+    const imgData = ctx.getImageData(0, 0, w, h);
+    const qrs = [];
+    const maxQRs = 4;
+    let count = 0;
+
+    while (count < maxQRs) {
+      let code = jsQR(imgData.data, w, h, { inversionAttempts: 'dontInvert' });
+      if (!code) {
+        code = jsQR(imgData.data, w, h, { inversionAttempts: 'onlyInvert' });
       }
+      if (!code) break;
+      qrs.push(code);
+      count++;
 
-      let w = cachedImg.width;
-      let h = cachedImg.height;
+      // Mask found QR directly in the CPU buffer — no extra getImageData readback
+      maskQrRegionInBuffer(imgData, code.location);
+    }
 
-      // Downsample to maxW (e.g. 540, 720, 1080) for optimal speed/accuracy balance
-      if (w > maxW) {
-        const ratio = maxW / w;
-        w = Math.round(w * ratio);
-        h = Math.round(h * ratio);
-      }
-
-      if (canvas.width !== w || canvas.height !== h) {
-        canvas.width = w;
-        canvas.height = h;
-      }
-
-      ctx.drawImage(cachedImg, 0, 0, w, h);
-      let imgData = ctx.getImageData(0, 0, w, h);
-      const qrs = [];
-      const maxQRs = 4;
-      let count = 0;
-
-      while (count < maxQRs) {
-        let code = jsQR(imgData.data, w, h, { inversionAttempts: 'dontInvert' });
-        if (!code) {
-          code = jsQR(imgData.data, w, h, { inversionAttempts: 'onlyInvert' });
-        }
-        if (!code) break;
-        qrs.push(code);
-        count++;
-
-        // Mask this QR on canvas so remaining QRs can be detected
-        maskQrRegion(ctx, code.location);
-        imgData = ctx.getImageData(0, 0, w, h);
-      }
-
-      resolve({ qrs, qr: qrs[0] || null, scanWidth: w, scanHeight: h });
-    };
-
-    cachedImg.onerror = () => resolve(null);
-    cachedImg.src = dataUrl;
-  });
+    return { qrs, qr: qrs[0] || null, scanWidth: w, scanHeight: h };
+  } finally {
+    // Free GPU memory immediately — ImageBitmap is not GC'd automatically
+    bitmap.close();
+  }
 }
 
 /**
@@ -310,6 +337,18 @@ async function globalCaptureLoop() {
       });
 
       if (dataUrl && isGlobalActive && !isTabScrolling) {
+        // Frame hash check: skip jsQR entirely when the screen hasn't changed and no QR is active.
+        // Saves 4–15ms decode time per frame on static pages.
+        const frameHash = computeFrameHash(dataUrl);
+        if (!hasActiveQR && frameHash === lastFrameHash) {
+          // Frame identical — reschedule at the same adaptive rate without decoding
+          const userFps = Math.max(1, Math.min(120, Number(settings.scanRate) || 2));
+          const idleFps = Math.max(1, Math.min(userFps, Math.max(4, Math.round(userFps * 0.75))));
+          loopTimer = setTimeout(globalCaptureLoop, Math.round(1000 / idleFps));
+          return;
+        }
+        lastFrameHash = frameHash;
+
         const videoInfo = tabVideoRects.get(tab.id) || null;
         const decoded = await decodeDataUrl(dataUrl, maxW, videoInfo);
 

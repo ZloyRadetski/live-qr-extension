@@ -202,3 +202,65 @@ export function areBoundsNear(b1, b2, maxDistance = 60) {
   const dy = b1.centerY - b2.centerY;
   return (dx * dx + dy * dy) <= (maxDistance * maxDistance);
 }
+
+/**
+ * Masks a QR code polygon directly inside an ImageData buffer (CPU-side).
+ * Fills the quadrilateral with white pixels using a scanline edge-fill algorithm,
+ * eliminating the need for a second getImageData() GPU readback when multiple QRs are present.
+ *
+ * @param {ImageData} imageData - The ImageData object whose .data buffer will be mutated.
+ * @param {QRLocation} location - Four corner points of the QR code.
+ * @param {number} [margin=4] - Extra pixels to expand the filled region.
+ */
+export function maskQrRegionInBuffer(imageData, location, margin = 4) {
+  if (!imageData || !location) return;
+  const { topLeftCorner: tl, topRightCorner: tr, bottomRightCorner: br, bottomLeftCorner: bl } = location;
+  if (!tl || !tr || !br || !bl) return;
+
+  const w = imageData.width;
+  const h = imageData.height;
+  const data = imageData.data;
+
+  // Expand corners outward by margin
+  const pts = [
+    { x: tl.x - margin, y: tl.y - margin },
+    { x: tr.x + margin, y: tr.y - margin },
+    { x: br.x + margin, y: br.y + margin },
+    { x: bl.x - margin, y: bl.y + margin }
+  ];
+
+  // Compute scanline bounds
+  let minY = Math.max(0, Math.floor(Math.min(pts[0].y, pts[1].y, pts[2].y, pts[3].y)));
+  let maxY = Math.min(h - 1, Math.ceil(Math.max(pts[0].y, pts[1].y, pts[2].y, pts[3].y)));
+
+  const n = pts.length;
+
+  for (let y = minY; y <= maxY; y++) {
+    // Find x-intersections of scanline y with each polygon edge
+    const xIntersections = [];
+    for (let i = 0; i < n; i++) {
+      const a = pts[i];
+      const b = pts[(i + 1) % n];
+      if ((a.y <= y && b.y > y) || (b.y <= y && a.y > y)) {
+        const t = (y - a.y) / (b.y - a.y);
+        xIntersections.push(a.x + t * (b.x - a.x));
+      }
+    }
+    if (xIntersections.length < 2) continue;
+    xIntersections.sort((a, b) => a - b);
+
+    const xStart = Math.max(0, Math.floor(xIntersections[0]));
+    const xEnd = Math.min(w - 1, Math.ceil(xIntersections[xIntersections.length - 1]));
+
+    // Fill scanline with white (RGBA = 255, 255, 255, 255)
+    const rowBase = y * w * 4;
+    for (let x = xStart; x <= xEnd; x++) {
+      const idx = rowBase + x * 4;
+      data[idx]     = 255; // R
+      data[idx + 1] = 255; // G
+      data[idx + 2] = 255; // B
+      data[idx + 3] = 255; // A
+    }
+  }
+}
+

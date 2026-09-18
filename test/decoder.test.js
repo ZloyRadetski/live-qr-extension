@@ -38,3 +38,32 @@ test('decodeVideoCrops safely handles empty or null video inputs without throwin
   assert.equal(decodeVideoCrops({ width: 100, height: 100 }, { rects: [] }), null);
   assert.ok(tabVideoRects instanceof Map);
 });
+
+test('computeFrameHash produces identical hash for identical inputs', async () => {
+  const { computeFrameHash } = await import('../src/background/background.js');
+
+  const sampleUrl = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/AAABBBCCDDEE==';
+
+  const h1 = computeFrameHash(sampleUrl);
+  const h2 = computeFrameHash(sampleUrl);
+  assert.equal(h1, h2, 'Same input must produce same hash');
+  assert.equal(typeof h1, 'number', 'Hash must be a number');
+});
+
+test('computeFrameHash produces different hashes for different frames', async () => {
+  const { computeFrameHash } = await import('../src/background/background.js');
+
+  const urlA = 'data:image/jpeg;base64,AAAABBBBCCCC';
+  const urlB = 'data:image/jpeg;base64,XXXXYYYYZZZZ';
+
+  assert.notEqual(computeFrameHash(urlA), computeFrameHash(urlB), 'Different inputs must produce different hashes');
+});
+
+test('computeFrameHash handles edge cases without throwing', async () => {
+  const { computeFrameHash } = await import('../src/background/background.js');
+
+  assert.doesNotThrow(() => computeFrameHash(''));
+  assert.doesNotThrow(() => computeFrameHash('x'));
+  assert.equal(computeFrameHash(''), 0, 'Empty string should return 0');
+});
+

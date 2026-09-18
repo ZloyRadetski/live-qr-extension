@@ -12,41 +12,21 @@
 
 ## Features
 
-* **Real-Time Screen Recognition**: Scans the screen directly via tab capture, bypassing CORS blocks on cross-origin images and video players like YouTube or Vimeo.
-* **GPU & CPU Optimized**: High-speed targeted decoding using `jsQR` with configurable rate limits (1 to 120 FPS) and low-power idle mode.
-* **HUD Bounding Box**: Highlights detected codes with clean, modern targeting brackets.
-* **Instant Actions**: Displays a floating panel that categorizes data into URLs, Wi-Fi credentials, emails, phone numbers, SMS, or plain text.
-* **One-Click Actions**: Easily copy payload or open links in a new tab with one click.
-* **Configurable Settings**: 5 color themes (Amber, Cyan, Emerald, Violet, Rose), resolution profiles (720p/1080p/1440p), auto-copy, and pause on scroll.
-* **Site Exclusions**: Exclude specific domains from active scanning with one click.
-* **Global Shortcut**: Toggle scanning on or off using <kbd>Alt</kbd> + <kbd>Q</kbd>.
+- **Real-Time Stream Processing**: Uses hardware-accelerated tab/screen capture to inspect visual output directly, bypassing CORS issues with cross-origin images or video players (YouTube, Vimeo, WebGL games).
+- **Zero-Latency Decoding**: Powered by `jsQR` with configurable FPS throttling (8 / 15 / 30 FPS) and smart frame downscaling.
+- **Dynamic HUD & Bounding Box**:
+  - Glowing neon cyan & emerald corner reticles tracking the QR polygon.
+  - Floating HUD card with automatic classification (URLs, WiFi credentials, Email, Phone numbers, SMS, Plain text).
+  - One-click "Copy to Clipboard" with feedback animation.
+  - "Open in New Tab" button for URLs.
+- **Auditory Cue**: Subtle synth chime on new QR code detection via Web Audio API.
+- **Popup Control Center**:
+  - Start / Stop toggle button with live status pulse.
+  - Scan rate presets (Eco 8 FPS, Balanced 15 FPS, High 30 FPS).
+  - Scan history with timestamps and one-click copy.
+  - Auto-copy to clipboard toggle.
+- **Hotkeys**: Press <kbd>Alt</kbd> + <kbd>Q</kbd> anywhere to instantly toggle the scanner.
 
----
-
-## Installation & Running in Firefox
-
-1. Open **Firefox** and navigate to:
-   ```
-   about:debugging#/runtime/this-firefox
-   ```
-2. Click **"Load Temporary Add-on..."**.
-3. Select `manifest.json` from this project folder.
-4. The **QR Radar** icon will appear in your Firefox toolbar.
-
----
-
-## Development & Building
-
-```bash
-# Install dependencies
-npm install
-
-# Run automated unit tests
-npm test
-
-# Build production bundles
-npm run build
-
-# Create Mozilla Add-ons (AMO) release packages
-npm run package
-```
+<div align="center">
+  <img src="icons/example.gif" alt="QR Radar Icon" width="50%" height="50%">
+</div>

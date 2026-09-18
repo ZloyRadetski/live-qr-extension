@@ -26,7 +26,7 @@ export class StreamScanner {
     this.video = null;
     this.canvas = null;
     this.ctx = null;
-    this.animId = null;
+    this.timerId = null;
     this.isRunning = false;
     this.lastScanTime = 0;
   }
@@ -84,20 +84,25 @@ export class StreamScanner {
   }
 
   /**
-   * Processing loop with FPS throttling.
+   * Processing loop with precise FPS throttling via setTimeout.
+   * Using setTimeout instead of requestAnimationFrame avoids firing at the monitor
+   * refresh rate (60/120 Hz) when the scan target is much lower (e.g. 5–15 FPS).
    */
   loop() {
     if (!this.isRunning) return;
 
     const now = performance.now();
     const frameInterval = 1000 / this.fps;
+    const elapsed = now - this.lastScanTime;
 
-    if (now - this.lastScanTime >= frameInterval) {
+    if (elapsed >= frameInterval) {
       this.scanCurrentFrame();
       this.lastScanTime = now;
     }
 
-    this.animId = requestAnimationFrame(() => this.loop());
+    // Sleep for the remaining time in this interval, minimum 4ms
+    const nextDelay = Math.max(4, frameInterval - (performance.now() - this.lastScanTime));
+    this.timerId = setTimeout(() => this.loop(), nextDelay);
   }
 
   /**
@@ -167,9 +172,9 @@ export class StreamScanner {
   stop() {
     this.isRunning = false;
 
-    if (this.animId) {
-      cancelAnimationFrame(this.animId);
-      this.animId = null;
+    if (this.timerId) {
+      clearTimeout(this.timerId);
+      this.timerId = null;
     }
 
     if (this.stream) {
