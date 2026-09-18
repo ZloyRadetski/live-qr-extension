@@ -307,6 +307,70 @@
       </p>
       <canvas id="moving-canvas" width="600" height="260"></canvas>
     </div>
+
+    <!-- Blinking & Toggle Speed Test -->
+    <div class="card" style="width: 100%; align-items: stretch;">
+      <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 8px; flex-wrap: wrap; gap: 8px;">
+        <h2 style="border: none; padding: 0; margin: 0;">8. Blinking & Toggle Speed Test (Тест скорости появления и исчезновения)</h2>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span id="blink-status-badge" style="display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 700; background: rgba(56, 239, 125, 0.15); color: #38ef7d; border: 1px solid rgba(56, 239, 125, 0.3);">
+            <span style="width: 7px; height: 7px; border-radius: 50%; background: #38ef7d; box-shadow: 0 0 8px #38ef7d;"></span>
+            STATUS: VISIBLE
+          </span>
+        </div>
+      </div>
+
+      <p style="color: var(--text-dim); font-size: 13px;">
+        Проверка мгновенного появления и исчезновения рамки при мигании или скрытии QR-кода. Позволяет протестировать скрытие через display: none, visibility: hidden, opacity: 0 и очистку canvas.
+      </p>
+
+      <div style="display: flex; gap: 12px; flex-wrap: wrap; align-items: center; background: rgba(13, 17, 23, 0.6); padding: 12px; border-radius: 10px; border: 1px solid var(--border);">
+        <button id="toggle-blink-manual" class="action-btn">Toggle Now (Вкл / Выкл)</button>
+        <button id="toggle-blink-auto" class="secondary-btn">Auto-Blink: ON</button>
+        
+        <div style="display: flex; align-items: center; gap: 6px; font-size: 13px;">
+          <label for="blink-interval-select" style="color: var(--text-dim);">Интервал:</label>
+          <select id="blink-interval-select" style="background: #0d1117; color: #fff; border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 13px; outline: none;">
+            <option value="500">500 ms (Быстро)</option>
+            <option value="1000" selected>1000 ms (1 сек)</option>
+            <option value="1500">1500 ms (1.5 сек)</option>
+            <option value="2000">2000 ms (2 сек)</option>
+          </select>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 6px; font-size: 13px;">
+          <label for="blink-mode-select" style="color: var(--text-dim);">Способ скрытия:</label>
+          <select id="blink-mode-select" style="background: #0d1117; color: #fff; border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 13px; outline: none;">
+            <option value="display" selected>display: none</option>
+            <option value="visibility">visibility: hidden</option>
+            <option value="opacity">opacity: 0</option>
+            <option value="clear">Canvas Clear (ctx.clearRect)</option>
+          </select>
+        </div>
+
+        <span id="blink-stats" style="color: var(--text-dim); font-size: 12px; margin-left: auto;">Переключений: 0</span>
+      </div>
+
+      <div style="display: flex; justify-content: space-around; width: 100%; flex-wrap: wrap; gap: 24px; padding-top: 8px;">
+        <!-- Target A: Image -->
+        <div style="display: flex; flex-direction: column; align-items: center; gap: 8px;">
+          <span style="font-size: 12px; color: var(--accent); font-weight: 600;">8A. &lt;img&gt; QR (DOM Image)</span>
+          <div style="width: 170px; height: 170px; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.2); border-radius: 10px; border: 1px dashed var(--border);">
+            <img id="blinking-qr-img" class="qr-box" style="width: 150px; height: 150px;" alt="Blinking QR Image">
+          </div>
+          <span style="font-size: 11px; color: var(--text-dim);">https://antigravity.ai/blink-test-img</span>
+        </div>
+
+        <!-- Target B: Canvas -->
+        <div style="display: flex; flex-direction: column; align-items: center; gap: 8px;">
+          <span style="font-size: 12px; color: var(--accent-green); font-weight: 600;">8B. &lt;canvas&gt; QR (Live 2D Canvas)</span>
+          <div style="width: 170px; height: 170px; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.2); border-radius: 10px; border: 1px dashed var(--border);">
+            <canvas id="blinking-qr-canvas" class="qr-box" width="150" height="150"></canvas>
+          </div>
+          <span style="font-size: 11px; color: var(--text-dim);">https://antigravity.ai/blink-test-canvas</span>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script src="test-bench.bundle.js"></script>

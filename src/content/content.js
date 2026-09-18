@@ -47,21 +47,26 @@ async function triggerDomScan() {
   if (settings.scanDomImages === false) return;
 
   const results = scanVisibleDomImages();
-  if (Array.isArray(results) && results.length > 0) {
-    if (!overlay) {
-      await initOverlay();
-    }
-    if (overlay) {
-      overlay.updateFromDom(results);
-    }
-    // Notify background service of each detected QR
-    for (const res of results) {
-      try {
-        browser.runtime.sendMessage({
-          type: 'DOM_QR_DETECTED',
-          qrData: res.data
-        }).catch(() => {});
-      } catch {}
+  if (Array.isArray(results)) {
+    if (results.length > 0) {
+      if (!overlay) {
+        await initOverlay();
+      }
+      if (overlay) {
+        overlay.updateFromDom(results);
+      }
+      // Notify background service of each detected QR
+      for (const res of results) {
+        try {
+          browser.runtime.sendMessage({
+            type: 'DOM_QR_DETECTED',
+            qrData: res.data
+          }).catch(() => {});
+        } catch {}
+      }
+    } else if (overlay) {
+      // Notify overlay of empty results so missing trackers are cleaned up immediately
+      overlay.updateFromDom([]);
     }
   }
 }
@@ -76,7 +81,7 @@ function setupDomObserver() {
     clearTimeout(domMutationDebounce);
     domMutationDebounce = setTimeout(() => {
       triggerDomScan();
-    }, 350);
+    }, 30);
   });
 
   if (document.body) {
@@ -84,7 +89,7 @@ function setupDomObserver() {
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ['src', 'srcset', 'class', 'style']
+      attributeFilter: ['src', 'srcset', 'class', 'style', 'hidden']
     });
   }
 }

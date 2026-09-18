@@ -193,10 +193,156 @@ function setupInPageSimulation() {
   });
 }
 
+// Blinking & Toggle Test (Card 8)
+async function setupBlinkingTest() {
+  const img = document.getElementById('blinking-qr-img');
+  const canvas = document.getElementById('blinking-qr-canvas');
+  const toggleBtn = document.getElementById('toggle-blink-manual');
+  const autoBtn = document.getElementById('toggle-blink-auto');
+  const intervalSelect = document.getElementById('blink-interval-select');
+  const modeSelect = document.getElementById('blink-mode-select');
+  const statusBadge = document.getElementById('blink-status-badge');
+  const statsSpan = document.getElementById('blink-stats');
+
+  if (!img || !canvas || !toggleBtn) return;
+
+  // Render initial QRs
+  const dataUrl = await QRCode.toDataURL('https://antigravity.ai/blink-test-img', {
+    width: 200,
+    margin: 2,
+    color: { dark: '#000000', light: '#ffffff' }
+  });
+  img.src = dataUrl;
+
+  const offscreen = document.createElement('canvas');
+  offscreen.width = 150;
+  offscreen.height = 150;
+  await QRCode.toCanvas(offscreen, 'https://antigravity.ai/blink-test-canvas', {
+    width: 150,
+    margin: 2,
+    color: { dark: '#031326', light: '#ffffff' }
+  });
+
+  const ctx = canvas.getContext('2d');
+  function drawCanvasQR() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(offscreen, 0, 0, canvas.width, canvas.height);
+  }
+  function clearCanvasQR() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  }
+  drawCanvasQR();
+
+  let isVisible = true;
+  let toggleCount = 0;
+  let autoTimer = null;
+  let autoRunning = true;
+
+  function setVisibleState(visible, mode) {
+    isVisible = visible;
+    toggleCount++;
+    if (statsSpan) statsSpan.textContent = `Переключений: ${toggleCount}`;
+
+    if (statusBadge) {
+      if (visible) {
+        statusBadge.style.background = 'rgba(56, 239, 125, 0.15)';
+        statusBadge.style.color = '#38ef7d';
+        statusBadge.style.borderColor = 'rgba(56, 239, 125, 0.3)';
+        statusBadge.innerHTML = `<span style="width: 7px; height: 7px; border-radius: 50%; background: #38ef7d; box-shadow: 0 0 8px #38ef7d;"></span> STATUS: VISIBLE`;
+      } else {
+        statusBadge.style.background = 'rgba(239, 68, 68, 0.15)';
+        statusBadge.style.color = '#ef4444';
+        statusBadge.style.borderColor = 'rgba(239, 68, 68, 0.3)';
+        statusBadge.innerHTML = `<span style="width: 7px; height: 7px; border-radius: 50%; background: #ef4444;"></span> STATUS: HIDDEN`;
+      }
+    }
+
+    // Reset styles
+    img.style.display = '';
+    img.style.visibility = '';
+    img.style.opacity = '';
+    canvas.style.display = '';
+    canvas.style.visibility = '';
+    canvas.style.opacity = '';
+
+    if (visible) {
+      drawCanvasQR();
+    } else {
+      if (mode === 'display') {
+        img.style.display = 'none';
+        canvas.style.display = 'none';
+      } else if (mode === 'visibility') {
+        img.style.visibility = 'hidden';
+        canvas.style.visibility = 'hidden';
+      } else if (mode === 'opacity') {
+        img.style.opacity = '0';
+        canvas.style.opacity = '0';
+      } else if (mode === 'clear') {
+        clearCanvasQR();
+        img.style.display = 'none';
+      }
+    }
+  }
+
+  function toggle() {
+    const mode = modeSelect ? modeSelect.value : 'display';
+    setVisibleState(!isVisible, mode);
+  }
+
+  function restartAutoBlink() {
+    if (autoTimer) {
+      clearInterval(autoTimer);
+      autoTimer = null;
+    }
+    if (!autoRunning) return;
+    const interval = parseInt(intervalSelect ? intervalSelect.value : '1000', 10) || 1000;
+    autoTimer = setInterval(toggle, interval);
+  }
+
+  toggleBtn.addEventListener('click', () => {
+    // If user clicks manual toggle, stop auto-blink
+    autoRunning = false;
+    if (autoBtn) autoBtn.textContent = 'Auto-Blink: OFF';
+    if (autoTimer) {
+      clearInterval(autoTimer);
+      autoTimer = null;
+    }
+    toggle();
+  });
+
+  if (autoBtn) {
+    autoBtn.addEventListener('click', () => {
+      autoRunning = !autoRunning;
+      autoBtn.textContent = autoRunning ? 'Auto-Blink: ON' : 'Auto-Blink: OFF';
+      if (autoRunning) {
+        restartAutoBlink();
+      } else if (autoTimer) {
+        clearInterval(autoTimer);
+        autoTimer = null;
+      }
+    });
+  }
+
+  if (intervalSelect) {
+    intervalSelect.addEventListener('change', () => {
+      if (autoRunning) restartAutoBlink();
+    });
+  }
+
+  if (modeSelect) {
+    modeSelect.addEventListener('change', () => {
+      setVisibleState(isVisible, modeSelect.value);
+    });
+  }
+
+  restartAutoBlink();
+}
+
 function initTestBench() {
   renderSampleQRs();
   setupCustomGenerator();
   setupAnimatedCanvas();
+  setupBlinkingTest();
   setupInPageSimulation();
 }
 

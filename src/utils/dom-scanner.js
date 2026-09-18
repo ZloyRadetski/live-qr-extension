@@ -7,26 +7,66 @@
 import jsQR from 'jsqr';
 import { maskQrRegion } from './coordinates.js';
 
+let offscreenCanvas = null;
+let offscreenCtx = null;
+
+function getOffscreenCanvas(width, height) {
+  if (typeof document === 'undefined') return null;
+  if (!offscreenCanvas) {
+    offscreenCanvas = document.createElement('canvas');
+    offscreenCtx = offscreenCanvas.getContext('2d', { willReadFrequently: true });
+  }
+  if (offscreenCanvas.width !== width || offscreenCanvas.height !== height) {
+    offscreenCanvas.width = width;
+    offscreenCanvas.height = height;
+  }
+  return { canvas: offscreenCanvas, ctx: offscreenCtx };
+}
+
 /**
- * Checks whether an element is roughly within the visible browser viewport.
+ * Checks whether an element is roughly within the visible browser viewport and actually visible.
  * @param {HTMLElement} el
  * @param {number} [margin=50]
  * @returns {boolean}
  */
 export function isElementInViewport(el, margin = 50) {
   if (!el || typeof el.getBoundingClientRect !== 'function') return false;
+
+  // Direct fast check for element hidden attributes or inline styles
+  if (el.hidden || el.style?.display === 'none' || el.style?.visibility === 'hidden' || el.style?.opacity === '0') {
+    return false;
+  }
+
   const rect = el.getBoundingClientRect();
+  if (rect.width <= 12 || rect.height <= 12) return false;
+
   const vw = typeof window !== 'undefined' ? window.innerWidth : 1920;
   const vh = typeof window !== 'undefined' ? window.innerHeight : 1080;
 
-  return (
+  const inBounds = (
     rect.bottom >= -margin &&
     rect.top <= vh + margin &&
     rect.right >= -margin &&
-    rect.left <= vw + margin &&
-    rect.width > 12 &&
-    rect.height > 12
+    rect.left <= vw + margin
   );
+  if (!inBounds) return false;
+
+  // Computed style check in browser environments
+  if (typeof window !== 'undefined' && typeof window.getComputedStyle === 'function') {
+    try {
+      const style = window.getComputedStyle(el);
+      if (
+        style.display === 'none' ||
+        style.visibility === 'hidden' ||
+        style.visibility === 'collapse' ||
+        style.opacity === '0'
+      ) {
+        return false;
+      }
+    } catch {}
+  }
+
+  return true;
 }
 
 /**
@@ -86,11 +126,9 @@ export function scanMediaElement(el, maxDimension = 1200) {
 
   if (typeof document === 'undefined') return [];
 
-  const canvas = document.createElement('canvas');
-  canvas.width = scanW;
-  canvas.height = scanH;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return [];
+  const buffer = getOffscreenCanvas(scanW, scanH);
+  if (!buffer || !buffer.ctx) return [];
+  const { canvas, ctx } = buffer;
 
   try {
     ctx.drawImage(el, 0, 0, scanW, scanH);

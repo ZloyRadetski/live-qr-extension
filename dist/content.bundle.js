@@ -10430,6 +10430,167 @@
     };
   }
 
+  // src/utils/dom-scanner.js
+  var import_jsqr = __toESM(require_jsQR(), 1);
+  var offscreenCanvas = null;
+  var offscreenCtx = null;
+  function getOffscreenCanvas(width, height) {
+    if (typeof document === "undefined") return null;
+    if (!offscreenCanvas) {
+      offscreenCanvas = document.createElement("canvas");
+      offscreenCtx = offscreenCanvas.getContext("2d", { willReadFrequently: true });
+    }
+    if (offscreenCanvas.width !== width || offscreenCanvas.height !== height) {
+      offscreenCanvas.width = width;
+      offscreenCanvas.height = height;
+    }
+    return { canvas: offscreenCanvas, ctx: offscreenCtx };
+  }
+  function isElementInViewport(el, margin = 50) {
+    if (!el || typeof el.getBoundingClientRect !== "function") return false;
+    if (el.hidden || el.style?.display === "none" || el.style?.visibility === "hidden" || el.style?.opacity === "0") {
+      return false;
+    }
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 12 || rect.height <= 12) return false;
+    const vw = typeof window !== "undefined" ? window.innerWidth : 1920;
+    const vh = typeof window !== "undefined" ? window.innerHeight : 1080;
+    const inBounds = rect.bottom >= -margin && rect.top <= vh + margin && rect.right >= -margin && rect.left <= vw + margin;
+    if (!inBounds) return false;
+    if (typeof window !== "undefined" && typeof window.getComputedStyle === "function") {
+      try {
+        const style = window.getComputedStyle(el);
+        if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse" || style.opacity === "0") {
+          return false;
+        }
+      } catch {
+      }
+    }
+    return true;
+  }
+  function scanMediaElement(el, maxDimension = 1200) {
+    if (!el) return [];
+    let width = 0;
+    let height = 0;
+    if (el.tagName === "IMG") {
+      if (!el.complete || !el.naturalWidth || !el.naturalHeight) return [];
+      width = el.naturalWidth;
+      height = el.naturalHeight;
+      const currentSrc = el.currentSrc || el.src;
+      if (el._qrRadarCached !== void 0 && el._qrRadarCachedSrc === currentSrc) {
+        if (!el._qrRadarCached || el._qrRadarCached.length === 0) return [];
+        const rect = el.getBoundingClientRect();
+        const scaleX = rect.width / el._qrRadarCachedW;
+        const scaleY = rect.height / el._qrRadarCachedH;
+        return el._qrRadarCached.map((item) => ({
+          data: item.data,
+          location: {
+            topLeftCorner: { x: rect.left + item.loc.topLeftCorner.x * scaleX, y: rect.top + item.loc.topLeftCorner.y * scaleY },
+            topRightCorner: { x: rect.left + item.loc.topRightCorner.x * scaleX, y: rect.top + item.loc.topRightCorner.y * scaleY },
+            bottomRightCorner: { x: rect.left + item.loc.bottomRightCorner.x * scaleX, y: rect.top + item.loc.bottomRightCorner.y * scaleY },
+            bottomLeftCorner: { x: rect.left + item.loc.bottomLeftCorner.x * scaleX, y: rect.top + item.loc.bottomLeftCorner.y * scaleY }
+          },
+          rect,
+          element: el,
+          isDom: true
+        }));
+      }
+    } else if (el.tagName === "CANVAS") {
+      width = el.width;
+      height = el.height;
+    } else {
+      return [];
+    }
+    if (width < 20 || height < 20) return [];
+    let scanW = width;
+    let scanH = height;
+    if (scanW > maxDimension || scanH > maxDimension) {
+      const ratio = Math.min(maxDimension / scanW, maxDimension / scanH);
+      scanW = Math.round(scanW * ratio);
+      scanH = Math.round(scanH * ratio);
+    }
+    if (typeof document === "undefined") return [];
+    const buffer = getOffscreenCanvas(scanW, scanH);
+    if (!buffer || !buffer.ctx) return [];
+    const { canvas, ctx } = buffer;
+    try {
+      ctx.drawImage(el, 0, 0, scanW, scanH);
+      let imgData = ctx.getImageData(0, 0, scanW, scanH);
+      const found = [];
+      const maxPerElement = 4;
+      let count = 0;
+      while (count < maxPerElement) {
+        const code = (0, import_jsqr.default)(imgData.data, scanW, scanH, {
+          inversionAttempts: "attemptBoth"
+        });
+        if (!code) break;
+        const rect = el.getBoundingClientRect();
+        const scaleX = rect.width / scanW;
+        const scaleY = rect.height / scanH;
+        const location = {
+          topLeftCorner: {
+            x: rect.left + code.location.topLeftCorner.x * scaleX,
+            y: rect.top + code.location.topLeftCorner.y * scaleY
+          },
+          topRightCorner: {
+            x: rect.left + code.location.topRightCorner.x * scaleX,
+            y: rect.top + code.location.topRightCorner.y * scaleY
+          },
+          bottomRightCorner: {
+            x: rect.left + code.location.bottomRightCorner.x * scaleX,
+            y: rect.top + code.location.bottomRightCorner.y * scaleY
+          },
+          bottomLeftCorner: {
+            x: rect.left + code.location.bottomLeftCorner.x * scaleX,
+            y: rect.top + code.location.bottomLeftCorner.y * scaleY
+          }
+        };
+        found.push({
+          data: code.data,
+          location,
+          rect,
+          element: el,
+          isDom: true
+        });
+        count++;
+        maskQrRegion(ctx, code.location);
+        imgData = ctx.getImageData(0, 0, scanW, scanH);
+      }
+      if (el.tagName === "IMG") {
+        const currentSrc = el.currentSrc || el.src;
+        el._qrRadarCachedSrc = currentSrc;
+        el._qrRadarCachedW = scanW;
+        el._qrRadarCachedH = scanH;
+        el._qrRadarCached = found.map((f) => ({
+          data: f.data,
+          loc: {
+            topLeftCorner: { x: (f.location.topLeftCorner.x - f.rect.left) * (scanW / f.rect.width), y: (f.location.topLeftCorner.y - f.rect.top) * (scanH / f.rect.height) },
+            topRightCorner: { x: (f.location.topRightCorner.x - f.rect.left) * (scanW / f.rect.width), y: (f.location.topRightCorner.y - f.rect.top) * (scanH / f.rect.height) },
+            bottomRightCorner: { x: (f.location.bottomRightCorner.x - f.rect.left) * (scanW / f.rect.width), y: (f.location.bottomRightCorner.y - f.rect.top) * (scanH / f.rect.height) },
+            bottomLeftCorner: { x: (f.location.bottomLeftCorner.x - f.rect.left) * (scanW / f.rect.width), y: (f.location.bottomLeftCorner.y - f.rect.top) * (scanH / f.rect.height) }
+          }
+        }));
+      }
+      return found;
+    } catch {
+      return [];
+    }
+  }
+  function scanVisibleDomImages() {
+    if (typeof document === "undefined") return [];
+    const elements = Array.from(document.querySelectorAll("img, canvas"));
+    const allResults = [];
+    for (const el of elements) {
+      if (isElementInViewport(el)) {
+        const results = scanMediaElement(el);
+        if (Array.isArray(results) && results.length > 0) {
+          allResults.push(...results);
+        }
+      }
+    }
+    return allResults;
+  }
+
   // src/content/overlay.js
   var QRBoxTracker = class {
     constructor(id, root, options, callbacks = {}) {
@@ -10448,7 +10609,7 @@
       this.isDomLocked = false;
       this.isFixed = false;
       this.missingFrames = 0;
-      this.maxMissingFrames = 8;
+      this.maxMissingFrames = 2;
       this.lastWidth = 0;
       this.lastHeight = 0;
       this.lastX = null;
@@ -10595,6 +10756,12 @@
     updateLivePosition() {
       if (!this.boxElement || this.boxElement.classList.contains("qr-hidden")) {
         return;
+      }
+      if (this.anchorElement) {
+        if (!this.anchorElement.isConnected || !isElementInViewport(this.anchorElement)) {
+          this.boxElement.classList.add("qr-hidden");
+          return;
+        }
       }
       if (this.anchorElement && this.anchorElement.isConnected && this.anchorOffset) {
         const rect = this.anchorElement.getBoundingClientRect();
@@ -10818,14 +10985,15 @@
       }
       for (const [id, tracker] of this.trackers.entries()) {
         if (!matchedTrackerIds.has(id)) {
-          if (tracker.isDomLocked && tracker.anchorElement && tracker.anchorElement.isConnected) {
-            const rect = tracker.anchorElement.getBoundingClientRect();
-            const inView = rect.bottom >= 0 && rect.top <= window.innerHeight && rect.right >= 0 && rect.left <= window.innerWidth && rect.width > 12 && rect.height > 12;
-            if (inView && source === "screen") {
+          if (tracker.isDomLocked && tracker.anchorElement) {
+            if (source === "screen" && isElementInViewport(tracker.anchorElement)) {
               continue;
             }
           }
           tracker.missingFrames++;
+          if (tracker.missingFrames >= 1 && tracker.boxElement) {
+            tracker.boxElement.classList.add("qr-hidden");
+          }
           if (tracker.missingFrames > tracker.maxMissingFrames) {
             tracker.destroy();
             this.trackers.delete(id);
@@ -10884,12 +11052,13 @@
      */
     onScreenQrNotFound() {
       for (const [id, tracker] of this.trackers.entries()) {
-        if (tracker.isDomLocked && tracker.anchorElement && tracker.anchorElement.isConnected) {
-          const rect = tracker.anchorElement.getBoundingClientRect();
-          const inView = rect.bottom >= 0 && rect.top <= window.innerHeight && rect.right >= 0 && rect.left <= window.innerWidth;
-          if (inView) continue;
+        if (tracker.isDomLocked && tracker.anchorElement && isElementInViewport(tracker.anchorElement)) {
+          continue;
         }
         tracker.missingFrames++;
+        if (tracker.missingFrames >= 1 && tracker.boxElement) {
+          tracker.boxElement.classList.add("qr-hidden");
+        }
         if (tracker.missingFrames > tracker.maxMissingFrames) {
           tracker.destroy();
           this.trackers.delete(id);
@@ -11058,140 +11227,6 @@
     return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
   }
 
-  // src/utils/dom-scanner.js
-  var import_jsqr = __toESM(require_jsQR(), 1);
-  function isElementInViewport(el, margin = 50) {
-    if (!el || typeof el.getBoundingClientRect !== "function") return false;
-    const rect = el.getBoundingClientRect();
-    const vw = typeof window !== "undefined" ? window.innerWidth : 1920;
-    const vh = typeof window !== "undefined" ? window.innerHeight : 1080;
-    return rect.bottom >= -margin && rect.top <= vh + margin && rect.right >= -margin && rect.left <= vw + margin && rect.width > 12 && rect.height > 12;
-  }
-  function scanMediaElement(el, maxDimension = 1200) {
-    if (!el) return [];
-    let width = 0;
-    let height = 0;
-    if (el.tagName === "IMG") {
-      if (!el.complete || !el.naturalWidth || !el.naturalHeight) return [];
-      width = el.naturalWidth;
-      height = el.naturalHeight;
-      const currentSrc = el.currentSrc || el.src;
-      if (el._qrRadarCached !== void 0 && el._qrRadarCachedSrc === currentSrc) {
-        if (!el._qrRadarCached || el._qrRadarCached.length === 0) return [];
-        const rect = el.getBoundingClientRect();
-        const scaleX = rect.width / el._qrRadarCachedW;
-        const scaleY = rect.height / el._qrRadarCachedH;
-        return el._qrRadarCached.map((item) => ({
-          data: item.data,
-          location: {
-            topLeftCorner: { x: rect.left + item.loc.topLeftCorner.x * scaleX, y: rect.top + item.loc.topLeftCorner.y * scaleY },
-            topRightCorner: { x: rect.left + item.loc.topRightCorner.x * scaleX, y: rect.top + item.loc.topRightCorner.y * scaleY },
-            bottomRightCorner: { x: rect.left + item.loc.bottomRightCorner.x * scaleX, y: rect.top + item.loc.bottomRightCorner.y * scaleY },
-            bottomLeftCorner: { x: rect.left + item.loc.bottomLeftCorner.x * scaleX, y: rect.top + item.loc.bottomLeftCorner.y * scaleY }
-          },
-          rect,
-          element: el,
-          isDom: true
-        }));
-      }
-    } else if (el.tagName === "CANVAS") {
-      width = el.width;
-      height = el.height;
-    } else {
-      return [];
-    }
-    if (width < 20 || height < 20) return [];
-    let scanW = width;
-    let scanH = height;
-    if (scanW > maxDimension || scanH > maxDimension) {
-      const ratio = Math.min(maxDimension / scanW, maxDimension / scanH);
-      scanW = Math.round(scanW * ratio);
-      scanH = Math.round(scanH * ratio);
-    }
-    if (typeof document === "undefined") return [];
-    const canvas = document.createElement("canvas");
-    canvas.width = scanW;
-    canvas.height = scanH;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return [];
-    try {
-      ctx.drawImage(el, 0, 0, scanW, scanH);
-      let imgData = ctx.getImageData(0, 0, scanW, scanH);
-      const found = [];
-      const maxPerElement = 4;
-      let count = 0;
-      while (count < maxPerElement) {
-        const code = (0, import_jsqr.default)(imgData.data, scanW, scanH, {
-          inversionAttempts: "attemptBoth"
-        });
-        if (!code) break;
-        const rect = el.getBoundingClientRect();
-        const scaleX = rect.width / scanW;
-        const scaleY = rect.height / scanH;
-        const location = {
-          topLeftCorner: {
-            x: rect.left + code.location.topLeftCorner.x * scaleX,
-            y: rect.top + code.location.topLeftCorner.y * scaleY
-          },
-          topRightCorner: {
-            x: rect.left + code.location.topRightCorner.x * scaleX,
-            y: rect.top + code.location.topRightCorner.y * scaleY
-          },
-          bottomRightCorner: {
-            x: rect.left + code.location.bottomRightCorner.x * scaleX,
-            y: rect.top + code.location.bottomRightCorner.y * scaleY
-          },
-          bottomLeftCorner: {
-            x: rect.left + code.location.bottomLeftCorner.x * scaleX,
-            y: rect.top + code.location.bottomLeftCorner.y * scaleY
-          }
-        };
-        found.push({
-          data: code.data,
-          location,
-          rect,
-          element: el,
-          isDom: true
-        });
-        count++;
-        maskQrRegion(ctx, code.location);
-        imgData = ctx.getImageData(0, 0, scanW, scanH);
-      }
-      if (el.tagName === "IMG") {
-        const currentSrc = el.currentSrc || el.src;
-        el._qrRadarCachedSrc = currentSrc;
-        el._qrRadarCachedW = scanW;
-        el._qrRadarCachedH = scanH;
-        el._qrRadarCached = found.map((f) => ({
-          data: f.data,
-          loc: {
-            topLeftCorner: { x: (f.location.topLeftCorner.x - f.rect.left) * (scanW / f.rect.width), y: (f.location.topLeftCorner.y - f.rect.top) * (scanH / f.rect.height) },
-            topRightCorner: { x: (f.location.topRightCorner.x - f.rect.left) * (scanW / f.rect.width), y: (f.location.topRightCorner.y - f.rect.top) * (scanH / f.rect.height) },
-            bottomRightCorner: { x: (f.location.bottomRightCorner.x - f.rect.left) * (scanW / f.rect.width), y: (f.location.bottomRightCorner.y - f.rect.top) * (scanH / f.rect.height) },
-            bottomLeftCorner: { x: (f.location.bottomLeftCorner.x - f.rect.left) * (scanW / f.rect.width), y: (f.location.bottomLeftCorner.y - f.rect.top) * (scanH / f.rect.height) }
-          }
-        }));
-      }
-      return found;
-    } catch {
-      return [];
-    }
-  }
-  function scanVisibleDomImages() {
-    if (typeof document === "undefined") return [];
-    const elements = Array.from(document.querySelectorAll("img, canvas"));
-    const allResults = [];
-    for (const el of elements) {
-      if (isElementInViewport(el)) {
-        const results = scanMediaElement(el);
-        if (Array.isArray(results) && results.length > 0) {
-          allResults.push(...results);
-        }
-      }
-    }
-    return allResults;
-  }
-
   // src/content/content.js
   var overlay = null;
   var isMounted = false;
@@ -11217,22 +11252,26 @@
     const settings = await getSettings();
     if (settings.scanDomImages === false) return;
     const results = scanVisibleDomImages();
-    if (Array.isArray(results) && results.length > 0) {
-      if (!overlay) {
-        await initOverlay();
-      }
-      if (overlay) {
-        overlay.updateFromDom(results);
-      }
-      for (const res of results) {
-        try {
-          browser.runtime.sendMessage({
-            type: "DOM_QR_DETECTED",
-            qrData: res.data
-          }).catch(() => {
-          });
-        } catch {
+    if (Array.isArray(results)) {
+      if (results.length > 0) {
+        if (!overlay) {
+          await initOverlay();
         }
+        if (overlay) {
+          overlay.updateFromDom(results);
+        }
+        for (const res of results) {
+          try {
+            browser.runtime.sendMessage({
+              type: "DOM_QR_DETECTED",
+              qrData: res.data
+            }).catch(() => {
+            });
+          } catch {
+          }
+        }
+      } else if (overlay) {
+        overlay.updateFromDom([]);
       }
     }
   }
@@ -11242,14 +11281,14 @@
       clearTimeout(domMutationDebounce);
       domMutationDebounce = setTimeout(() => {
         triggerDomScan();
-      }, 350);
+      }, 30);
     });
     if (document.body) {
       domObserver.observe(document.body, {
         childList: true,
         subtree: true,
         attributes: true,
-        attributeFilter: ["src", "srcset", "class", "style"]
+        attributeFilter: ["src", "srcset", "class", "style", "hidden"]
       });
     }
   }

@@ -7,6 +7,7 @@ import { classifyContent } from '../utils/parser.js';
 import { computeBounds, lerpLocation, areBoundsNear } from '../utils/coordinates.js';
 import { addScanHistory } from '../utils/storage.js';
 import { findAnchorElement, computeAnchorOffset, resolveAnchorPosition, isElementFixed } from '../utils/dom-anchor.js';
+import { isElementInViewport } from '../utils/dom-scanner.js';
 
 /**
  * Individual QR Tracker managing a single on-screen bounding box and HUD card.
@@ -30,7 +31,7 @@ class QRBoxTracker {
     this.isDomLocked = false;
     this.isFixed = false;
     this.missingFrames = 0;
-    this.maxMissingFrames = 8;
+    this.maxMissingFrames = 2; // Fast disappearance on lost track
     this.lastWidth = 0;
     this.lastHeight = 0;
     this.lastX = null;
@@ -215,6 +216,13 @@ class QRBoxTracker {
   updateLivePosition() {
     if (!this.boxElement || this.boxElement.classList.contains('qr-hidden')) {
       return;
+    }
+
+    if (this.anchorElement) {
+      if (!this.anchorElement.isConnected || !isElementInViewport(this.anchorElement)) {
+        this.boxElement.classList.add('qr-hidden');
+        return;
+      }
     }
 
     if (this.anchorElement && this.anchorElement.isConnected && this.anchorOffset) {
@@ -485,23 +493,18 @@ export class QROverlayManager {
     for (const [id, tracker] of this.trackers.entries()) {
       if (!matchedTrackerIds.has(id)) {
         // If tracker is DOM locked, check if its DOM element is still visible on page
-        if (tracker.isDomLocked && tracker.anchorElement && tracker.anchorElement.isConnected) {
-          const rect = tracker.anchorElement.getBoundingClientRect();
-          const inView = (
-            rect.bottom >= 0 &&
-            rect.top <= window.innerHeight &&
-            rect.right >= 0 &&
-            rect.left <= window.innerWidth &&
-            rect.width > 12 &&
-            rect.height > 12
-          );
-          if (inView && source === 'screen') {
+        if (tracker.isDomLocked && tracker.anchorElement) {
+          if (source === 'screen' && isElementInViewport(tracker.anchorElement)) {
             // Background screen capture didn't see the tiny DOM image; keep it!
             continue;
           }
         }
 
         tracker.missingFrames++;
+        if (tracker.missingFrames >= 1 && tracker.boxElement) {
+          tracker.boxElement.classList.add('qr-hidden');
+        }
+
         if (tracker.missingFrames > tracker.maxMissingFrames) {
           tracker.destroy();
           this.trackers.delete(id);
@@ -570,18 +573,15 @@ export class QROverlayManager {
    */
   onScreenQrNotFound() {
     for (const [id, tracker] of this.trackers.entries()) {
-      if (tracker.isDomLocked && tracker.anchorElement && tracker.anchorElement.isConnected) {
-        const rect = tracker.anchorElement.getBoundingClientRect();
-        const inView = (
-          rect.bottom >= 0 &&
-          rect.top <= window.innerHeight &&
-          rect.right >= 0 &&
-          rect.left <= window.innerWidth
-        );
-        if (inView) continue;
+      if (tracker.isDomLocked && tracker.anchorElement && isElementInViewport(tracker.anchorElement)) {
+        continue;
       }
 
       tracker.missingFrames++;
+      if (tracker.missingFrames >= 1 && tracker.boxElement) {
+        tracker.boxElement.classList.add('qr-hidden');
+      }
+
       if (tracker.missingFrames > tracker.maxMissingFrames) {
         tracker.destroy();
         this.trackers.delete(id);

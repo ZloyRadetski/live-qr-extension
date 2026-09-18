@@ -72,7 +72,7 @@
   will-change: transform;
   transform-origin: 0 0;
   pointer-events: auto;
-  transition: opacity 0.2s ease;
+  transition: opacity 0.08s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .qr-radar-box.qr-fixed-anchor {
@@ -80,9 +80,10 @@
 }
 
 .qr-radar-box.qr-hidden {
-  opacity: 0;
-  visibility: hidden;
-  pointer-events: none;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  transition: opacity 0.05s ease !important;
 }
 
 .qr-radar-box-frame {

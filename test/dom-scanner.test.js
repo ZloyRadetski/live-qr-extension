@@ -36,9 +36,33 @@ test('isElementInViewport accurately detects visible vs hidden elements', () => 
     })
   };
 
+  const hiddenAttrEl = {
+    hidden: true,
+    getBoundingClientRect: () => ({ left: 100, right: 300, top: 50, bottom: 250, width: 200, height: 200 })
+  };
+
+  const displayNoneEl = {
+    style: { display: 'none' },
+    getBoundingClientRect: () => ({ left: 100, right: 300, top: 50, bottom: 250, width: 200, height: 200 })
+  };
+
+  const visibilityHiddenEl = {
+    style: { visibility: 'hidden' },
+    getBoundingClientRect: () => ({ left: 100, right: 300, top: 50, bottom: 250, width: 200, height: 200 })
+  };
+
+  const opacityZeroEl = {
+    style: { opacity: '0' },
+    getBoundingClientRect: () => ({ left: 100, right: 300, top: 50, bottom: 250, width: 200, height: 200 })
+  };
+
   assert.equal(isElementInViewport(visibleEl), true);
   assert.equal(isElementInViewport(hiddenEl), false);
   assert.equal(isElementInViewport(tinyEl), false);
+  assert.equal(isElementInViewport(hiddenAttrEl), false);
+  assert.equal(isElementInViewport(displayNoneEl), false);
+  assert.equal(isElementInViewport(visibilityHiddenEl), false);
+  assert.equal(isElementInViewport(opacityZeroEl), false);
 });
 
 test('scanMediaElement safely rejects invalid, incomplete, or tiny images', () => {
