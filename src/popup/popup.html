@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QR Radar</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="brand">
+        <div class="logo-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+            <rect x="3" y="3" width="7" height="7" rx="1.5"></rect>
+            <rect x="14" y="3" width="7" height="7" rx="1.5"></rect>
+            <rect x="3" y="14" width="7" height="7" rx="1.5"></rect>
+            <rect x="14" y="14" width="7" height="7" rx="1.5"></rect>
+            <line x1="7" y1="7" x2="7.01" y2="7"></line>
+            <line x1="17" y1="7" x2="17.01" y2="7"></line>
+            <line x1="7" y1="17" x2="7.01" y2="17"></line>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <h1>QR Radar</h1>
+          <span class="version">v1.0 • Real-Time HUD</span>
+        </div>
+      </div>
+      <div id="status-badge" class="status-badge status-idle">
+        <span class="status-dot"></span>
+        <span class="status-label">Idle</span>
+      </div>
+    </header>
+
+    <!-- Main Scanner Toggle Action -->
+    <div class="main-action-section">
+      <button id="toggle-scan-btn" class="toggle-scan-btn">
+        <div class="btn-glow"></div>
+        <svg class="radar-scan-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+          <circle cx="12" cy="12" r="9"></circle>
+          <path d="M12 3a9 9 0 0 1 9 9"></path>
+          <circle cx="12" cy="12" r="2"></circle>
+        </svg>
+        <span id="toggle-scan-label">Start Real-Time Scanner</span>
+      </button>
+      <div class="hotkey-tip">
+        Shortcut: <kbd>Alt</kbd> + <kbd>Q</kbd> to toggle anytime
+      </div>
+    </div>
+
+    <!-- Quick Settings Accordion / Panel -->
+    <div class="settings-card">
+      <div class="setting-row">
+        <div class="setting-info">
+          <span class="setting-title">Scan Rate (FPS)</span>
+          <span class="setting-desc">Balance speed vs CPU usage</span>
+        </div>
+        <div class="segmented-control" id="fps-selector">
+          <button class="segment-btn" data-fps="8">8 (Eco)</button>
+          <button class="segment-btn active" data-fps="15">15</button>
+          <button class="segment-btn" data-fps="30">30</button>
+        </div>
+      </div>
+
+      <div class="setting-row">
+        <div class="setting-info">
+          <span class="setting-title">Audio Cue</span>
+          <span class="setting-desc">Play chime on detection</span>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" id="setting-sound" checked>
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div class="setting-row">
+        <div class="setting-info">
+          <span class="setting-title">Auto-Copy</span>
+          <span class="setting-desc">Copy data to clipboard instantly</span>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" id="setting-autocopy">
+          <span class="slider"></span>
+        </label>
+      </div>
+    </div>
+
+    <!-- Scan History Section -->
+    <div class="history-section">
+      <div class="history-header">
+        <div class="history-title">
+          <span>Recent Scans</span>
+          <span id="history-count" class="counter-badge">0</span>
+        </div>
+        <button id="clear-history-btn" class="clear-history-btn" title="Clear scan history">
+          Clear
+        </button>
+      </div>
+
+      <div id="history-list" class="history-list">
+        <!-- Empty state or scan items dynamically populated -->
+      </div>
+    </div>
+  </div>
+
+  <script src="../../dist/popup.bundle.js"></script>
+</body>
+</html>

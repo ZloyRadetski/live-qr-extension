@@ -1,0 +1,24 @@
+{
+  "name": "firefox-realtime-qr-scanner",
+  "version": "1.0.0",
+  "description": "Firefox extension for real-time screen QR code recognition with HUD overlay and instant actions",
+  "type": "module",
+  "scripts": {
+    "build": "node build.js",
+    "test": "node --test test/*.test.js"
+  },
+  "keywords": [
+    "firefox-addon",
+    "qr-code",
+    "real-time",
+    "webrtc",
+    "hud"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "jsqr": "^1.4.0",
+    "qrcode": "^1.5.4"
+  }
+}

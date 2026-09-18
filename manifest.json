@@ -1,0 +1,52 @@
+{
+  "manifest_version": 3,
+  "name": "QR Radar - Real-Time Screen QR Scanner",
+  "version": "1.0.0",
+  "description": "Recognizes QR codes anywhere on your screen in real-time with HUD bounding box tracking and instant actions.",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "action": {
+    "default_title": "QR Radar",
+    "default_popup": "src/popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "background": {
+    "scripts": ["src/background/background.js"]
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["dist/content.bundle.js"],
+      "css": ["dist/overlay.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "permissions": [
+    "activeTab",
+    "storage",
+    "scripting"
+  ],
+  "commands": {
+    "toggle-scanner": {
+      "suggested_key": {
+        "default": "Alt+Q"
+      },
+      "description": "Toggle Real-Time QR Radar Scanner"
+    }
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "qr-radar@antigravity.addon",
+      "strict_min_version": "109.0"
+    }
+  }
+}
