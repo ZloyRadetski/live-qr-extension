@@ -236,14 +236,16 @@ export function scanMediaElement(el, maxDimension = 1200) {
     }
 
     return found;
-  } catch {
+  } catch (err) {
     // Cross-origin image (CORS) or tainted canvas - safely isolate
+    console.warn(`[QR Radar] scanMediaElement failed for ${el.tagName}#${el.id || '?'} (${scanW}x${scanH}):`, err?.message || err);
     el._qrRadarTainted = true;
     // Reset canvas singleton so other elements are not poisoned
     offscreenCanvas = null;
     offscreenCtx = null;
     return [];
   }
+
 }
 
 /**
@@ -267,6 +269,7 @@ export function scanVisibleDomImages() {
 
   return allResults;
 }
+
 
 /**
  * Collects bounding rects for all visible HTML5 <video> elements in the viewport.

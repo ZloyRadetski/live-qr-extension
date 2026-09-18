@@ -10599,7 +10599,8 @@
         }));
       }
       return found;
-    } catch {
+    } catch (err) {
+      console.warn(`[QR Radar] scanMediaElement failed for ${el.tagName}#${el.id || "?"} (${scanW}x${scanH}):`, err?.message || err);
       el._qrRadarTainted = true;
       offscreenCanvas = null;
       offscreenCtx = null;
