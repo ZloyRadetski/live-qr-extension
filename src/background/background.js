@@ -21,6 +21,10 @@ let loopTimer = null;
 let cachedSettings = null;
 let currentActiveTab = null;
 
+// Track QR data already saved to history to avoid repeated writes on every frame
+const reportedQrDataThisSession = new Set();
+let lastQrDataSnapshot = ''; // stringified set of active QR data for change detection
+
 async function getCachedSettings() {
   if (!cachedSettings) {
     cachedSettings = await getSettings();
@@ -310,14 +314,24 @@ async function globalCaptureLoop() {
         const decoded = await decodeDataUrl(dataUrl, maxW, videoInfo);
 
         if (decoded && decoded.qrs && decoded.qrs.length > 0) {
+          const wasActive = hasActiveQR;
           hasActiveQR = true;
-          for (const qr of decoded.qrs) {
-            const parsed = classifyContent(qr.data);
-            addScanHistory({
-              text: qr.data,
-              type: parsed.type,
-              title: parsed.title
-            }).catch(() => {});
+
+          // Only write history when QR data is newly seen (not on every frame)
+          const newDataKeys = decoded.qrs.map((q) => q.data).join('|');
+          if (!wasActive || newDataKeys !== lastQrDataSnapshot) {
+            lastQrDataSnapshot = newDataKeys;
+            for (const qr of decoded.qrs) {
+              if (!reportedQrDataThisSession.has(qr.data)) {
+                reportedQrDataThisSession.add(qr.data);
+                const parsed = classifyContent(qr.data);
+                addScanHistory({
+                  text: qr.data,
+                  type: parsed.type,
+                  title: parsed.title
+                }).catch(() => {});
+              }
+            }
           }
 
           browser.tabs.sendMessage(tab.id, {

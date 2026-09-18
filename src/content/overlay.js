@@ -24,12 +24,14 @@ class QRBoxTracker {
     this.miniBadge = null;
 
     this.currentLocation = null;
+    this.cachedBounds = null; // cached computeBounds(currentLocation) to avoid recompute in syncTrackers
     this.lastDetectedText = null;
     this.anchorElement = null;
     this.anchorOffset = null;
     this.docBounds = null;
     this.isDomLocked = false;
     this.isFixed = false;
+    this._isFixedForAnchor = null; // anchor element reference when isFixed was last computed
     this.missingFrames = 0;
     this.maxMissingFrames = 2; // Fast disappearance on lost track
     this.lastWidth = 0;
@@ -98,6 +100,7 @@ class QRBoxTracker {
       : (this.currentLocation ? lerpLocation(this.currentLocation, targetLoc, 0.45) : targetLoc);
 
     const bounds = computeBounds(this.currentLocation);
+    this.cachedBounds = bounds; // cache for syncTrackers lookup
 
     // Anchor to DOM element
     const prevAnchor = this.anchorElement;
@@ -112,12 +115,16 @@ class QRBoxTracker {
       this.anchorOffset = computeAnchorOffset(this.anchorElement, bounds);
     }
 
-    // Check if element is inside a fixed container
-    this.isFixed = isElementFixed(this.anchorElement);
-    if (this.isFixed) {
-      this.boxElement.classList.add('qr-fixed-anchor');
-    } else {
-      this.boxElement.classList.remove('qr-fixed-anchor');
+    // isFixed: computed only once per anchor element (getComputedStyle DOM walk is expensive).
+    // Re-computed only when the anchor element reference changes.
+    if (this.anchorElement !== this._isFixedForAnchor) {
+      this._isFixedForAnchor = this.anchorElement;
+      this.isFixed = isElementFixed(this.anchorElement);
+      if (this.isFixed) {
+        this.boxElement.classList.add('qr-fixed-anchor');
+      } else {
+        this.boxElement.classList.remove('qr-fixed-anchor');
+      }
     }
 
     // Document-relative fallback
@@ -480,11 +487,11 @@ export class QROverlayManager {
       const itemBounds = computeBounds(item.location);
       let matchedTracker = null;
 
-      // Find matching tracker by data or spatial overlap
+      // Find matching tracker by data or spatial overlap.
+      // Use cachedBounds to avoid re-running computeBounds on every tracker every frame.
       for (const tracker of this.trackers.values()) {
         const isSameText = tracker.lastDetectedText === item.data;
-        const trackerBounds = tracker.currentLocation ? computeBounds(tracker.currentLocation) : null;
-        const isNear = trackerBounds && areBoundsNear(trackerBounds, itemBounds, 90);
+        const isNear = tracker.cachedBounds && areBoundsNear(tracker.cachedBounds, itemBounds, 90);
 
         if (isSameText || isNear) {
           matchedTracker = tracker;

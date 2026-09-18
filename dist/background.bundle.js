@@ -10297,6 +10297,8 @@
   var loopTimer = null;
   var cachedSettings = null;
   var currentActiveTab = null;
+  var reportedQrDataThisSession = /* @__PURE__ */ new Set();
+  var lastQrDataSnapshot = "";
   async function getCachedSettings() {
     if (!cachedSettings) {
       cachedSettings = await getSettings();
@@ -10507,15 +10509,23 @@
           const videoInfo = tabVideoRects.get(tab.id) || null;
           const decoded = await decodeDataUrl(dataUrl, maxW, videoInfo);
           if (decoded && decoded.qrs && decoded.qrs.length > 0) {
+            const wasActive = hasActiveQR;
             hasActiveQR = true;
-            for (const qr of decoded.qrs) {
-              const parsed = classifyContent(qr.data);
-              addScanHistory({
-                text: qr.data,
-                type: parsed.type,
-                title: parsed.title
-              }).catch(() => {
-              });
+            const newDataKeys = decoded.qrs.map((q) => q.data).join("|");
+            if (!wasActive || newDataKeys !== lastQrDataSnapshot) {
+              lastQrDataSnapshot = newDataKeys;
+              for (const qr of decoded.qrs) {
+                if (!reportedQrDataThisSession.has(qr.data)) {
+                  reportedQrDataThisSession.add(qr.data);
+                  const parsed = classifyContent(qr.data);
+                  addScanHistory({
+                    text: qr.data,
+                    type: parsed.type,
+                    title: parsed.title
+                  }).catch(() => {
+                  });
+                }
+              }
             }
             browser.tabs.sendMessage(tab.id, {
               type: "QR_DETECTED",

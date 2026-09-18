@@ -42,16 +42,13 @@ export function findAnchorElement(centerX, centerY, ignoreRootId = 'qr-radar-roo
     } catch {}
   }
 
-  // 3. Pick the smallest enclosing element (deepest in DOM) that isn't BODY or HTML
-  const nonBody = candidates.filter((el) => el.tagName !== 'BODY' && el.tagName !== 'HTML');
-  if (nonBody.length > 0) {
-    // Sort by bounding area (smallest first)
-    nonBody.sort((a, b) => {
-      const ra = a.getBoundingClientRect();
-      const rb = b.getBoundingClientRect();
-      return (ra.width * ra.height) - (rb.width * rb.height);
-    });
-    return nonBody[0];
+  // 3. Pick the deepest non-body element: elementsFromPoint returns them deepest-first already,
+  // so the first non-body/non-html element is the tightest container.
+  // (Avoid getBoundingClientRect sort — it forces layout reflow on every candidate.)
+  for (const el of candidates) {
+    if (el.tagName !== 'BODY' && el.tagName !== 'HTML') {
+      return el;
+    }
   }
 
   return candidates[0] || null;

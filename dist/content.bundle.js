@@ -10350,14 +10350,10 @@
       } catch {
       }
     }
-    const nonBody = candidates.filter((el) => el.tagName !== "BODY" && el.tagName !== "HTML");
-    if (nonBody.length > 0) {
-      nonBody.sort((a, b) => {
-        const ra = a.getBoundingClientRect();
-        const rb = b.getBoundingClientRect();
-        return ra.width * ra.height - rb.width * rb.height;
-      });
-      return nonBody[0];
+    for (const el of candidates) {
+      if (el.tagName !== "BODY" && el.tagName !== "HTML") {
+        return el;
+      }
     }
     return candidates[0] || null;
   }
@@ -10656,12 +10652,14 @@
       this.hudCard = null;
       this.miniBadge = null;
       this.currentLocation = null;
+      this.cachedBounds = null;
       this.lastDetectedText = null;
       this.anchorElement = null;
       this.anchorOffset = null;
       this.docBounds = null;
       this.isDomLocked = false;
       this.isFixed = false;
+      this._isFixedForAnchor = null;
       this.missingFrames = 0;
       this.maxMissingFrames = 2;
       this.lastWidth = 0;
@@ -10716,6 +10714,7 @@
       }
       this.currentLocation = isDom ? targetLoc : this.currentLocation ? lerpLocation(this.currentLocation, targetLoc, 0.45) : targetLoc;
       const bounds = computeBounds(this.currentLocation);
+      this.cachedBounds = bounds;
       const prevAnchor = this.anchorElement;
       if (!this.anchorElement || !this.anchorElement.isConnected) {
         this.anchorElement = anchorEl || findAnchorElement(bounds.centerX, bounds.centerY);
@@ -10724,11 +10723,14 @@
       if (!this.anchorOffset || !isStaticImg || this.anchorElement !== prevAnchor) {
         this.anchorOffset = computeAnchorOffset(this.anchorElement, bounds);
       }
-      this.isFixed = isElementFixed(this.anchorElement);
-      if (this.isFixed) {
-        this.boxElement.classList.add("qr-fixed-anchor");
-      } else {
-        this.boxElement.classList.remove("qr-fixed-anchor");
+      if (this.anchorElement !== this._isFixedForAnchor) {
+        this._isFixedForAnchor = this.anchorElement;
+        this.isFixed = isElementFixed(this.anchorElement);
+        if (this.isFixed) {
+          this.boxElement.classList.add("qr-fixed-anchor");
+        } else {
+          this.boxElement.classList.remove("qr-fixed-anchor");
+        }
       }
       const scrollX = typeof window !== "undefined" ? window.pageXOffset || window.scrollX || 0 : 0;
       const scrollY = typeof window !== "undefined" ? window.pageYOffset || window.scrollY || 0 : 0;
@@ -11029,8 +11031,7 @@
         let matchedTracker = null;
         for (const tracker of this.trackers.values()) {
           const isSameText = tracker.lastDetectedText === item.data;
-          const trackerBounds = tracker.currentLocation ? computeBounds(tracker.currentLocation) : null;
-          const isNear = trackerBounds && areBoundsNear(trackerBounds, itemBounds, 90);
+          const isNear = tracker.cachedBounds && areBoundsNear(tracker.cachedBounds, itemBounds, 90);
           if (isSameText || isNear) {
             matchedTracker = tracker;
             break;
