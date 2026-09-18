@@ -10530,8 +10530,7 @@
     } catch (err) {
     }
     if (isGlobalActive) {
-      const settings2 = await getCachedSettings();
-      const userFps = Math.max(1, Math.min(120, settings2.scanRate || 12));
+      const userFps = Math.max(1, Math.min(120, settings.scanRate || 12));
       const effectiveFps = hasActiveQR ? Math.min(userFps, 10) : Math.min(userFps, 4);
       const targetInterval = Math.round(1e3 / effectiveFps);
       const elapsed = performance.now() - loopStartTime;

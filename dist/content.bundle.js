@@ -11293,6 +11293,17 @@
   var domObserver = null;
   var domMutationDebounce = null;
   var lastReportedVideoKey = "";
+  var cachedContentSettings = null;
+  var settingsCacheTime = 0;
+  var SETTINGS_CACHE_TTL = 5e3;
+  async function getCachedContentSettings() {
+    const now = Date.now();
+    if (!cachedContentSettings || now - settingsCacheTime > SETTINGS_CACHE_TTL) {
+      cachedContentSettings = await getSettings();
+      settingsCacheTime = now;
+    }
+    return cachedContentSettings;
+  }
   function reportVisibleVideoRects() {
     const rects = getVisibleVideoRects();
     const key = rects.map((r) => `${r.left},${r.top},${r.width},${r.height}`).join(";");
@@ -11328,7 +11339,7 @@
   }
   async function triggerDomScan() {
     if (!isMounted) return;
-    const settings = await getSettings();
+    const settings = await getCachedContentSettings();
     if (settings.scanDomImages === false) return;
     reportVisibleVideoRects();
     const results = scanVisibleDomImages();
@@ -11340,15 +11351,13 @@
         if (overlay) {
           overlay.updateFromDom(results);
         }
-        for (const res of results) {
-          try {
-            browser.runtime.sendMessage({
-              type: "DOM_QR_DETECTED",
-              qrData: res.data
-            }).catch(() => {
-            });
-          } catch {
-          }
+        try {
+          browser.runtime.sendMessage({
+            type: "DOM_QR_DETECTED",
+            qrData: results[0].data
+          }).catch(() => {
+          });
+        } catch {
         }
       } else if (overlay) {
         overlay.updateFromDom([]);
@@ -11472,6 +11481,8 @@
           return false;
         }
         case "SETTINGS_UPDATED": {
+          cachedContentSettings = message.settings || null;
+          settingsCacheTime = message.settings ? Date.now() : 0;
           if (overlay && message.settings) {
             overlay.updateSettings(message.settings);
           }
@@ -11543,7 +11554,6 @@
     });
   }
   window.addEventListener("yt-navigate-finish", onSpaNavigation);
-  document.addEventListener("yt-navigate-finish", onSpaNavigation);
   window.addEventListener("popstate", onSpaNavigation);
   window.addEventListener("hashchange", onSpaNavigation);
   window.addEventListener("keydown", (e) => {

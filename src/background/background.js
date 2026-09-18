@@ -325,11 +325,10 @@ async function globalCaptureLoop() {
   }
 
   if (isGlobalActive) {
-    const settings = await getCachedSettings();
-
     // ADAPTIVE POWER MANAGEMENT:
     // When no QR is on screen: run at 4 FPS (250ms interval, ~1% CPU load).
     // When a QR is active on screen: run at up to user scanRate (e.g. 8-10 FPS) for responsive tracking.
+    // 'settings' is already fetched at the top of this iteration — no redundant await here.
     const userFps = Math.max(1, Math.min(120, settings.scanRate || 12));
     const effectiveFps = hasActiveQR ? Math.min(userFps, 10) : Math.min(userFps, 4);
     const targetInterval = Math.round(1000 / effectiveFps);

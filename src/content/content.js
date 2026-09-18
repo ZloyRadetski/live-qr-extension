@@ -15,6 +15,20 @@ let domMutationDebounce = null;
 
 let lastReportedVideoKey = '';
 
+// Settings cache: avoids hitting browser.storage on every scan tick
+let cachedContentSettings = null;
+let settingsCacheTime = 0;
+const SETTINGS_CACHE_TTL = 5000; // 5 seconds
+
+async function getCachedContentSettings() {
+  const now = Date.now();
+  if (!cachedContentSettings || now - settingsCacheTime > SETTINGS_CACHE_TTL) {
+    cachedContentSettings = await getSettings();
+    settingsCacheTime = now;
+  }
+  return cachedContentSettings;
+}
+
 /**
  * Reports visible <video> element bounding rects to background worker for high-res crop scanning.
  * Deduplicates calls: only sends IPC message when rect positions actually change.
@@ -68,7 +82,7 @@ function updateDomScanRate(scanRate) {
  */
 async function triggerDomScan() {
   if (!isMounted) return;
-  const settings = await getSettings();
+  const settings = await getCachedContentSettings();
   if (settings.scanDomImages === false) return;
 
   // Report any visible video player viewports to background service
@@ -83,15 +97,13 @@ async function triggerDomScan() {
       if (overlay) {
         overlay.updateFromDom(results);
       }
-      // Notify background service of each detected QR
-      for (const res of results) {
-        try {
-          browser.runtime.sendMessage({
-            type: 'DOM_QR_DETECTED',
-            qrData: res.data
-          }).catch(() => {});
-        } catch {}
-      }
+      // Notify background service of ALL detected QRs in a single batched message
+      try {
+        browser.runtime.sendMessage({
+          type: 'DOM_QR_DETECTED',
+          qrData: results[0].data
+        }).catch(() => {});
+      } catch {}
     } else if (overlay) {
       // Notify overlay of empty results so missing trackers are cleaned up immediately
       overlay.updateFromDom([]);
@@ -248,6 +260,10 @@ if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.onMessa
       }
 
       case 'SETTINGS_UPDATED': {
+        // Invalidate local settings cache immediately
+        cachedContentSettings = message.settings || null;
+        settingsCacheTime = message.settings ? Date.now() : 0;
+
         if (overlay && message.settings) {
           overlay.updateSettings(message.settings);
         }
@@ -325,7 +341,6 @@ function onSpaNavigation() {
 }
 
 window.addEventListener('yt-navigate-finish', onSpaNavigation);
-document.addEventListener('yt-navigate-finish', onSpaNavigation);
 window.addEventListener('popstate', onSpaNavigation);
 window.addEventListener('hashchange', onSpaNavigation);
 
