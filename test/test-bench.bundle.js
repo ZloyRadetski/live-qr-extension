@@ -13189,7 +13189,7 @@
     }
     const smallImg = document.getElementById("qr-small-img");
     if (smallImg) {
-      const dataUrl = await import_qrcode.default.toDataURL("https://antigravity.ai/tiny-dom-qr-test", {
+      const dataUrl = await import_qrcode.default.toDataURL("https://github.com", {
         width: 220,
         margin: 2,
         color: { dark: "#000000", light: "#ffffff" }
@@ -13227,7 +13227,7 @@
     const canvas = document.getElementById("custom-qr-canvas");
     if (!input || !btn || !canvas) return;
     async function generate() {
-      const text = input.value.trim() || "https://antigravity.ai";
+      const text = input.value.trim() || "https://github.com";
       await import_qrcode.default.toCanvas(canvas, text, {
         width: 200,
         margin: 2,
@@ -13245,7 +13245,7 @@
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     const offscreenCanvas = document.createElement("canvas");
-    await import_qrcode.default.toCanvas(offscreenCanvas, "https://antigravity.ai/realtime-radar-moving", {
+    await import_qrcode.default.toCanvas(offscreenCanvas, "https://github.com/realtime-radar-moving", {
       width: 140,
       margin: 2
     });
@@ -13328,7 +13328,7 @@
     const statusBadge = document.getElementById("blink-status-badge");
     const statsSpan = document.getElementById("blink-stats");
     if (!img || !canvas || !toggleBtn) return;
-    const dataUrl = await import_qrcode.default.toDataURL("https://antigravity.ai/blink-test-img", {
+    const dataUrl = await import_qrcode.default.toDataURL("https://github.com/blink-test-img", {
       width: 200,
       margin: 2,
       color: { dark: "#000000", light: "#ffffff" }
@@ -13337,7 +13337,7 @@
     const offscreen = document.createElement("canvas");
     offscreen.width = 150;
     offscreen.height = 150;
-    await import_qrcode.default.toCanvas(offscreen, "https://antigravity.ai/blink-test-canvas", {
+    await import_qrcode.default.toCanvas(offscreen, "https://github.com/blink-test-canvas", {
       width: 150,
       margin: 2,
       color: { dark: "#031326", light: "#ffffff" }
@@ -13451,7 +13451,7 @@
     const qrCanvas = document.createElement("canvas");
     qrCanvas.width = 160;
     qrCanvas.height = 160;
-    await import_qrcode.default.toCanvas(qrCanvas, "https://antigravity.ai/live-video-stream-qr", {
+    await import_qrcode.default.toCanvas(qrCanvas, "https://github.com/live-video-stream-qr", {
       width: 160,
       margin: 2,
       color: { dark: "#031326", light: "#ffffff" }
