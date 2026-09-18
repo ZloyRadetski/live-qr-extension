@@ -10355,7 +10355,7 @@
       if (srcX + srcW > imgW) srcW = imgW - srcX;
       if (srcY + srcH > imgH) srcH = imgH - srcY;
       if (srcW < 24 || srcH < 24) continue;
-      const maxCropDim = 540;
+      const maxCropDim = 720;
       let drawW = srcW, drawH = srcH;
       if (drawW > maxCropDim || drawH > maxCropDim) {
         const ratio = Math.min(maxCropDim / drawW, maxCropDim / drawH);

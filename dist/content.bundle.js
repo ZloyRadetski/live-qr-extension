@@ -10592,7 +10592,7 @@
   }
   function scanVisibleDomImages() {
     if (typeof document === "undefined") return [];
-    const elements = Array.from(document.querySelectorAll("img, canvas"));
+    const elements = Array.from(document.querySelectorAll("img, canvas, video"));
     const allResults = [];
     for (const el of elements) {
       if (isElementInViewport(el)) {

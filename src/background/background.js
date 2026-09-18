@@ -97,8 +97,8 @@ export function decodeVideoCrops(img, videoInfo) {
 
     if (srcW < 24 || srcH < 24) continue;
 
-    // Downsample to max 540px for fast jsQR decode (~75% pixel reduction on 2x DPR)
-    const maxCropDim = 540;
+    // Downsample to max 720px for fast jsQR decode while preserving detection accuracy
+    const maxCropDim = 720;
     let drawW = srcW, drawH = srcH;
     if (drawW > maxCropDim || drawH > maxCropDim) {
       const ratio = Math.min(maxCropDim / drawW, maxCropDim / drawH);
