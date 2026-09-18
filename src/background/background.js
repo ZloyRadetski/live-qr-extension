@@ -367,15 +367,17 @@ async function globalCaptureLoop() {
         return;
       }
 
-      // Configure resolution and JPEG quality according to user settings
+      // Configure resolution and JPEG quality according to user settings.
+      // maxW values are generous because jsQR now runs in a Worker (0 ms main-thread cost),
+      // and high-density QR codes (version 35+, 157+ modules) need ~2px/module minimum.
       const resolution = settings.scanResolution || '720';
-      let maxW = 720;
-      let quality = 75; // 75 produces compact ~350KB payload, eliminating GC memory churn
+      let maxW = 960;
+      let quality = 75;
       if (resolution === '720') {
-        maxW = 540;
-        quality = 70;
+        maxW = 720;  // was 540 — increased to handle dense QR codes at typical screen sizes
+        quality = 72;
       } else if (resolution === '1440') {
-        maxW = 1080;
+        maxW = 1280;
         quality = 82;
       }
 
@@ -385,14 +387,16 @@ async function globalCaptureLoop() {
       });
 
       if (dataUrl && isGlobalActive && !isTabScrolling) {
-        // Frame hash check: skip jsQR entirely when the screen hasn't changed and no QR is active.
-        // Saves 4–15ms decode time per frame on static pages.
         const frameHash = computeFrameHash(dataUrl);
-        if (!hasActiveQR && frameHash === lastFrameHash) {
-          // Frame identical — reschedule at the same adaptive rate without decoding
+
+        // Skip decode only when a QR IS actively tracked and the frame hasn't changed.
+        // Rationale: if hasActiveQR=false, a dense QR may have simply not been detected yet
+        // (e.g. due to resolution or angle). Skipping on a static page would deadlock the
+        // scanner permanently. With jsQR in a Worker, idle scans are off-thread anyway.
+        if (hasActiveQR && frameHash === lastFrameHash) {
+          // QR is locked, frame is identical — safe to reuse previous result without re-decoding
           const userFps = Math.max(1, Math.min(120, Number(settings.scanRate) || 2));
-          const idleFps = Math.max(1, Math.min(userFps, Math.max(4, Math.round(userFps * 0.75))));
-          loopTimer = setTimeout(globalCaptureLoop, Math.round(1000 / idleFps));
+          loopTimer = setTimeout(globalCaptureLoop, Math.round(1000 / userFps));
           return;
         }
         lastFrameHash = frameHash;
