@@ -41,6 +41,8 @@ const settingSound = document.getElementById('setting-sound');
 const settingAutoCopy = document.getElementById('setting-autocopy');
 const settingPauseScroll = document.getElementById('setting-pause-scroll');
 const fpsSelector = document.getElementById('fps-selector');
+const resolutionSelector = document.getElementById('resolution-selector');
+const settingDomImages = document.getElementById('setting-dom-images');
 
 // DOM Elements: Site Exclusions
 const currentDomainText = document.getElementById('current-domain-text');
@@ -161,7 +163,16 @@ async function loadPreferences() {
     btn.classList.toggle('active', btn.dataset.fps === currentFps);
   });
 
-  // 5. Blacklist Chips & Current Domain Button
+  // 5. Scan Resolution Profile
+  const currentRes = settings.scanResolution || '1080';
+  resolutionSelector.querySelectorAll('.segment-btn').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.res === currentRes);
+  });
+
+  // 6. DOM Images Toggle
+  settingDomImages.checked = settings.scanDomImages ?? true;
+
+  // 7. Blacklist Chips & Current Domain Button
   renderBlacklist(settings.blacklist || []);
 }
 
@@ -356,6 +367,16 @@ function setupEventListeners() {
   settingSound.addEventListener('change', () => applySettingChange({ soundEnabled: settingSound.checked }));
   settingAutoCopy.addEventListener('change', () => applySettingChange({ autoCopy: settingAutoCopy.checked }));
   settingPauseScroll.addEventListener('change', () => applySettingChange({ pauseOnScroll: settingPauseScroll.checked }));
+  settingDomImages.addEventListener('change', () => applySettingChange({ scanDomImages: settingDomImages.checked }));
+
+  // Resolution selector
+  resolutionSelector.addEventListener('click', (e) => {
+    const btn = e.target.closest('.segment-btn');
+    if (!btn) return;
+    resolutionSelector.querySelectorAll('.segment-btn').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    applySettingChange({ scanResolution: btn.dataset.res });
+  });
 
   // Exclude current site button
   toggleBlacklistBtn.addEventListener('click', async () => {

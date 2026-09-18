@@ -23,6 +23,10 @@
     // Auto copy content on detection
     pauseOnScroll: true,
     // Pause capture during scroll to save CPU
+    scanResolution: "1080",
+    // '720' | '1080' | '1440' capture detail
+    scanDomImages: true,
+    // Directly scan visible in-page <img> and <canvas>
     blacklist: []
     // List of excluded domains (e.g. ["bank.com"])
   };
@@ -239,6 +243,8 @@
   var settingAutoCopy = document.getElementById("setting-autocopy");
   var settingPauseScroll = document.getElementById("setting-pause-scroll");
   var fpsSelector = document.getElementById("fps-selector");
+  var resolutionSelector = document.getElementById("resolution-selector");
+  var settingDomImages = document.getElementById("setting-dom-images");
   var currentDomainText = document.getElementById("current-domain-text");
   var toggleBlacklistBtn = document.getElementById("toggle-blacklist-btn");
   var blacklistChips = document.getElementById("blacklist-chips");
@@ -325,6 +331,11 @@
     fpsSelector.querySelectorAll(".segment-btn").forEach((btn) => {
       btn.classList.toggle("active", btn.dataset.fps === currentFps);
     });
+    const currentRes = settings.scanResolution || "1080";
+    resolutionSelector.querySelectorAll(".segment-btn").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.res === currentRes);
+    });
+    settingDomImages.checked = settings.scanDomImages ?? true;
     renderBlacklist(settings.blacklist || []);
   }
   function renderBlacklist(blacklist = []) {
@@ -482,6 +493,14 @@
     settingSound.addEventListener("change", () => applySettingChange({ soundEnabled: settingSound.checked }));
     settingAutoCopy.addEventListener("change", () => applySettingChange({ autoCopy: settingAutoCopy.checked }));
     settingPauseScroll.addEventListener("change", () => applySettingChange({ pauseOnScroll: settingPauseScroll.checked }));
+    settingDomImages.addEventListener("change", () => applySettingChange({ scanDomImages: settingDomImages.checked }));
+    resolutionSelector.addEventListener("click", (e) => {
+      const btn = e.target.closest(".segment-btn");
+      if (!btn) return;
+      resolutionSelector.querySelectorAll(".segment-btn").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      applySettingChange({ scanResolution: btn.dataset.res });
+    });
     toggleBlacklistBtn.addEventListener("click", async () => {
       if (!currentDomain) return;
       const updated = await toggleDomainBlacklist(currentDomain);

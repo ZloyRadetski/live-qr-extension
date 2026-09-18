@@ -2460,6 +2460,7 @@ var init_overlay = __esm({
         this.scrollTimer = null;
         this.missingFrames = 0;
         this.maxMissingFrames = 8;
+        this.isDomLocked = false;
         this.audioCtx = null;
       }
       /**
@@ -2513,12 +2514,20 @@ var init_overlay = __esm({
       /**
        * Updates HUD with newly detected QR code.
        * @param {{ location: any, data: string }} qrResult
-       * @param {number} scaleX
-       * @param {number} scaleY
+       * @param {number} [scaleX=1]
+       * @param {number} [scaleY=1]
+       * @param {HTMLElement} [knownAnchor=null]
        */
-      update(qrResult, scaleX, scaleY) {
+      update(qrResult, scaleX = 1, scaleY = 1, knownAnchor = null) {
         if (!this.root) this.mount();
         if (!qrResult) {
+          if (this.isDomLocked && this.anchorElement && this.anchorElement.isConnected) {
+            const rect = this.anchorElement.getBoundingClientRect();
+            const inViewport = rect.bottom >= 0 && rect.top <= window.innerHeight && rect.right >= 0 && rect.left <= window.innerWidth && rect.width > 12 && rect.height > 12;
+            if (inViewport) {
+              return;
+            }
+          }
           this.missingFrames++;
           if (this.missingFrames > this.maxMissingFrames) {
             this.boxElement.classList.add("qr-hidden");
@@ -2526,11 +2535,16 @@ var init_overlay = __esm({
             this.anchorElement = null;
             this.anchorOffset = null;
             this.docBounds = null;
+            this.isDomLocked = false;
           }
           return;
         }
         this.missingFrames = 0;
         this.boxElement.classList.remove("qr-hidden");
+        if (knownAnchor) {
+          this.isDomLocked = true;
+          this.anchorElement = knownAnchor;
+        }
         if (this.isScrolling) {
           const text2 = qrResult.data;
           if (text2 !== this.lastDetectedText) {
@@ -2797,6 +2811,15 @@ async function renderSampleQRs() {
       margin: 2,
       color: { dark: "#111827", light: "#ffffff" }
     });
+  }
+  const smallImg = document.getElementById("qr-small-img");
+  if (smallImg) {
+    const dataUrl = await import_qrcode.default.toDataURL("https://antigravity.ai/tiny-dom-qr-test", {
+      width: 220,
+      margin: 2,
+      color: { dark: "#000000", light: "#ffffff" }
+    });
+    smallImg.src = dataUrl;
   }
 }
 async function setupCustomGenerator() {

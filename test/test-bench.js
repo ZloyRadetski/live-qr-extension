@@ -33,6 +33,16 @@ async function renderSampleQRs() {
       color: { dark: '#111827', light: '#ffffff' }
     });
   }
+
+  const smallImg = document.getElementById('qr-small-img');
+  if (smallImg) {
+    const dataUrl = await QRCode.toDataURL('https://antigravity.ai/tiny-dom-qr-test', {
+      width: 220,
+      margin: 2,
+      color: { dark: '#000000', light: '#ffffff' }
+    });
+    smallImg.src = dataUrl;
+  }
 }
 
 // Custom QR Generator

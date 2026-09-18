@@ -5,12 +5,65 @@
 
 import { QROverlayManager } from './overlay.js';
 import { getSettings } from '../utils/storage.js';
+import { scanVisibleDomImages } from '../utils/dom-scanner.js';
 
 let overlay = null;
 let isMounted = false;
+let domScanInterval = null;
+let domObserver = null;
+let domMutationDebounce = null;
 
 /**
- * Initializes or mounts overlay HUD.
+ * Scans visible DOM images (<img>, <canvas>) and updates overlay if QR detected.
+ */
+async function triggerDomScan() {
+  if (!isMounted) return;
+  const settings = await getSettings();
+  if (settings.scanDomImages === false) return;
+
+  const result = scanVisibleDomImages();
+  if (result && result.code) {
+    if (!overlay) {
+      await initOverlay();
+    }
+    if (overlay) {
+      overlay.update(result.code, 1, 1, result.element);
+    }
+    // Notify background service
+    try {
+      browser.runtime.sendMessage({
+        type: 'DOM_QR_DETECTED',
+        qrData: result.data
+      }).catch(() => {});
+    } catch {}
+  }
+}
+
+/**
+ * Sets up MutationObserver to detect dynamically added images.
+ */
+function setupDomObserver() {
+  if (domObserver || typeof MutationObserver === 'undefined') return;
+
+  domObserver = new MutationObserver(() => {
+    clearTimeout(domMutationDebounce);
+    domMutationDebounce = setTimeout(() => {
+      triggerDomScan();
+    }, 350);
+  });
+
+  if (document.body) {
+    domObserver.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['src', 'srcset', 'class', 'style']
+    });
+  }
+}
+
+/**
+ * Initializes or mounts overlay HUD and starts DOM media scanning.
  */
 async function initOverlay() {
   if (overlay && isMounted) return overlay;
@@ -35,6 +88,16 @@ async function initOverlay() {
 
   overlay.mount();
   isMounted = true;
+
+  // Start DOM scanning features if enabled
+  if (settings.scanDomImages !== false) {
+    setupDomObserver();
+    triggerDomScan();
+    if (!domScanInterval) {
+      domScanInterval = setInterval(triggerDomScan, 1400);
+    }
+  }
+
   return overlay;
 }
 
@@ -42,6 +105,16 @@ async function initOverlay() {
  * Unmounts overlay and clears state.
  */
 function teardownOverlay() {
+  if (domScanInterval) {
+    clearInterval(domScanInterval);
+    domScanInterval = null;
+  }
+  if (domObserver) {
+    domObserver.disconnect();
+    domObserver = null;
+  }
+  clearTimeout(domMutationDebounce);
+
   if (overlay) {
     overlay.unmount();
     overlay = null;
@@ -99,6 +172,24 @@ if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.onMessa
         if (overlay && message.settings) {
           overlay.updateSettings(message.settings);
         }
+        if (message.settings && message.settings.scanDomImages !== undefined) {
+          if (message.settings.scanDomImages && isMounted) {
+            setupDomObserver();
+            triggerDomScan();
+            if (!domScanInterval) {
+              domScanInterval = setInterval(triggerDomScan, 1400);
+            }
+          } else {
+            if (domScanInterval) {
+              clearInterval(domScanInterval);
+              domScanInterval = null;
+            }
+            if (domObserver) {
+              domObserver.disconnect();
+              domObserver = null;
+            }
+          }
+        }
         sendResponse({ success: true });
         return false;
       }
@@ -129,6 +220,7 @@ window.addEventListener('scroll', () => {
     try {
       browser.runtime.sendMessage({ type: 'SCROLL_END' }).catch(() => {});
     } catch {}
+    triggerDomScan();
   }, 140);
 }, { passive: true });
 

@@ -198,6 +198,31 @@
             <button class="segment-btn" data-fps="20">Turbo (20)</button>
           </div>
         </div>
+
+        <!-- Scan Resolution Profile -->
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-title">Scan Resolution</span>
+            <span class="setting-desc">Detail level for screen QRs</span>
+          </div>
+          <div class="segmented-control" id="resolution-selector">
+            <button class="segment-btn" data-res="720">720p</button>
+            <button class="segment-btn active" data-res="1080">1080p</button>
+            <button class="segment-btn" data-res="1440">1440p</button>
+          </div>
+        </div>
+
+        <!-- Scan In-Page DOM Images -->
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-title">Scan Page Images</span>
+            <span class="setting-desc">Directly scans &lt;img&gt; &amp; &lt;canvas&gt;</span>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="setting-dom-images" checked>
+            <span class="slider"></span>
+          </label>
+        </div>
       </div>
 
       <!-- Section: Domain Exclusions -->

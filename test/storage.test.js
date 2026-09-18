@@ -24,5 +24,7 @@ test('DEFAULT_SETTINGS contains all customizable fields', () => {
   assert.equal(typeof DEFAULT_SETTINGS.soundEnabled, 'boolean');
   assert.equal(typeof DEFAULT_SETTINGS.autoCopy, 'boolean');
   assert.equal(typeof DEFAULT_SETTINGS.pauseOnScroll, 'boolean');
+  assert.equal(typeof DEFAULT_SETTINGS.scanResolution, 'string');
+  assert.equal(typeof DEFAULT_SETTINGS.scanDomImages, 'boolean');
   assert.ok(Array.isArray(DEFAULT_SETTINGS.blacklist));
 });

@@ -32,11 +32,12 @@ function getCanvas() {
 }
 
 /**
- * Decodes a JPEG data URL with jsQR using high-speed 540p scaling.
+ * Decodes a JPEG data URL with jsQR using configurable scaling.
  * @param {string} dataUrl
+ * @param {number} [maxW=1080]
  * @returns {Promise<{ qr: any, scanWidth: number, scanHeight: number } | null>}
  */
-async function decodeDataUrl(dataUrl) {
+async function decodeDataUrl(dataUrl, maxW = 1080) {
   const { canvas, ctx, cachedImg } = getCanvas();
   if (!canvas || !ctx || !cachedImg) return null;
 
@@ -45,8 +46,7 @@ async function decodeDataUrl(dataUrl) {
       let w = cachedImg.width;
       let h = cachedImg.height;
 
-      // Downsample to max 540px for ultra-low CPU decoding (<4ms)
-      const maxW = 540;
+      // Downsample to maxW (e.g. 720, 1080, 1440) for optimal speed/accuracy balance
       if (w > maxW) {
         const ratio = maxW / w;
         w = Math.round(w * ratio);
@@ -60,7 +60,7 @@ async function decodeDataUrl(dataUrl) {
 
       ctx.drawImage(cachedImg, 0, 0, w, h);
       const imgData = ctx.getImageData(0, 0, w, h);
-      const qr = jsQR(imgData.data, w, h, { inversionAttempts: 'dontInvert' });
+      const qr = jsQR(imgData.data, w, h, { inversionAttempts: 'attemptBoth' });
 
       resolve({ qr, scanWidth: w, scanHeight: h });
     };
@@ -127,13 +127,25 @@ async function globalCaptureLoop() {
         return;
       }
 
+      // Configure resolution and JPEG quality according to user settings
+      const resolution = settings.scanResolution || '1080';
+      let maxW = 1080;
+      let quality = 85;
+      if (resolution === '720') {
+        maxW = 720;
+        quality = 70;
+      } else if (resolution === '1440') {
+        maxW = 1440;
+        quality = 90;
+      }
+
       const dataUrl = await browser.tabs.captureVisibleTab(tab.windowId, {
         format: 'jpeg',
-        quality: 60
+        quality
       });
 
       if (dataUrl && isGlobalActive && !isTabScrolling) {
-        const decoded = await decodeDataUrl(dataUrl);
+        const decoded = await decodeDataUrl(dataUrl, maxW);
 
         if (decoded && decoded.qr) {
           hasActiveQR = true;
@@ -279,6 +291,20 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     case 'SCROLL_END': {
       isTabScrolling = false;
+      sendResponse({ ok: true });
+      return false;
+    }
+
+    case 'DOM_QR_DETECTED': {
+      hasActiveQR = true;
+      if (message.qrData) {
+        const parsed = classifyContent(message.qrData);
+        addScanHistory({
+          text: message.qrData,
+          type: parsed.type,
+          title: parsed.title
+        }).catch(() => {});
+      }
       sendResponse({ ok: true });
       return false;
     }

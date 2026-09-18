@@ -10075,6 +10075,10 @@
     // Auto copy content on detection
     pauseOnScroll: true,
     // Pause capture during scroll to save CPU
+    scanResolution: "1080",
+    // '720' | '1080' | '1440' capture detail
+    scanDomImages: true,
+    // Directly scan visible in-page <img> and <canvas>
     blacklist: []
     // List of excluded domains (e.g. ["bank.com"])
   };
@@ -10284,14 +10288,13 @@
     }
     return { canvas, ctx, cachedImg };
   }
-  async function decodeDataUrl(dataUrl) {
+  async function decodeDataUrl(dataUrl, maxW = 1080) {
     const { canvas: canvas2, ctx: ctx2, cachedImg: cachedImg2 } = getCanvas();
     if (!canvas2 || !ctx2 || !cachedImg2) return null;
     return new Promise((resolve) => {
       cachedImg2.onload = () => {
         let w = cachedImg2.width;
         let h = cachedImg2.height;
-        const maxW = 540;
         if (w > maxW) {
           const ratio = maxW / w;
           w = Math.round(w * ratio);
@@ -10303,7 +10306,7 @@
         }
         ctx2.drawImage(cachedImg2, 0, 0, w, h);
         const imgData = ctx2.getImageData(0, 0, w, h);
-        const qr = (0, import_jsqr.default)(imgData.data, w, h, { inversionAttempts: "dontInvert" });
+        const qr = (0, import_jsqr.default)(imgData.data, w, h, { inversionAttempts: "attemptBoth" });
         resolve({ qr, scanWidth: w, scanHeight: h });
       };
       cachedImg2.onerror = () => resolve(null);
@@ -10350,12 +10353,22 @@
           setTimeout(globalCaptureLoop, 500);
           return;
         }
+        const resolution = settings.scanResolution || "1080";
+        let maxW = 1080;
+        let quality = 85;
+        if (resolution === "720") {
+          maxW = 720;
+          quality = 70;
+        } else if (resolution === "1440") {
+          maxW = 1440;
+          quality = 90;
+        }
         const dataUrl = await browser.tabs.captureVisibleTab(tab.windowId, {
           format: "jpeg",
-          quality: 60
+          quality
         });
         if (dataUrl && isGlobalActive && !isTabScrolling) {
-          const decoded = await decodeDataUrl(dataUrl);
+          const decoded = await decodeDataUrl(dataUrl, maxW);
           if (decoded && decoded.qr) {
             hasActiveQR = true;
             const parsed = classifyContent(decoded.qr.data);
@@ -10472,6 +10485,20 @@
       }
       case "SCROLL_END": {
         isTabScrolling = false;
+        sendResponse({ ok: true });
+        return false;
+      }
+      case "DOM_QR_DETECTED": {
+        hasActiveQR = true;
+        if (message.qrData) {
+          const parsed = classifyContent(message.qrData);
+          addScanHistory({
+            text: message.qrData,
+            type: parsed.type,
+            title: parsed.title
+          }).catch(() => {
+          });
+        }
         sendResponse({ ok: true });
         return false;
       }
