@@ -4,7 +4,7 @@
  */
 
 import { classifyContent } from '../utils/parser.js';
-import { computeBounds, lerpLocation, areBoundsNear } from '../utils/coordinates.js';
+import { computeBounds, lerpLocation, areBoundsNear, distance } from '../utils/coordinates.js';
 import { addScanHistory } from '../utils/storage.js';
 import { findAnchorElement, computeAnchorOffset, resolveAnchorPosition, isElementFixed } from '../utils/dom-anchor.js';
 import { isElementInViewport } from '../utils/dom-scanner.js';
@@ -94,10 +94,11 @@ class QRBoxTracker {
       if (anchorEl) this.anchorElement = anchorEl;
     }
 
-    // Smooth location
-    this.currentLocation = isDom
-      ? targetLoc // direct DOM scan is exact, no lerp lag needed
-      : (this.currentLocation ? lerpLocation(this.currentLocation, targetLoc, 0.45) : targetLoc);
+    // Smooth location: direct DOM scan is exact; for screen captures, snap immediately if moving fast
+    const shouldSnap = !this.currentLocation || isDom || (this.currentLocation && distance(this.currentLocation.topLeftCorner, targetLoc.topLeftCorner) > 20);
+    this.currentLocation = shouldSnap
+      ? targetLoc
+      : lerpLocation(this.currentLocation, targetLoc, 0.6);
 
     const bounds = computeBounds(this.currentLocation);
     this.cachedBounds = bounds; // cache for syncTrackers lookup
@@ -127,9 +128,10 @@ class QRBoxTracker {
       }
     }
 
-    // Document-relative fallback
-    const scrollX = typeof window !== 'undefined' ? (window.pageXOffset || window.scrollX || 0) : 0;
-    const scrollY = typeof window !== 'undefined' ? (window.pageYOffset || window.scrollY || 0) : 0;
+    // Document-relative fallback: in fullscreen mode, scroll offsets must never displace the overlay
+    const isFullscreen = typeof document !== 'undefined' && !!document.fullscreenElement;
+    const scrollX = (!isFullscreen && typeof window !== 'undefined') ? (window.pageXOffset || window.scrollX || 0) : 0;
+    const scrollY = (!isFullscreen && typeof window !== 'undefined') ? (window.pageYOffset || window.scrollY || 0) : 0;
 
     this.docBounds = {
       docX: bounds.minX + scrollX,
@@ -138,10 +140,11 @@ class QRBoxTracker {
       height: bounds.height
     };
 
-    // Position: apply the freshly detected bounds directly
-    const targetX = this.isFixed ? bounds.minX : this.docBounds.docX;
-    const targetY = this.isFixed ? bounds.minY : this.docBounds.docY;
-    this.applyPosition(targetX, targetY, bounds.width, bounds.height, true, this.isFixed);
+    // Position: in fullscreen or fixed anchor, bounds are viewport-relative directly
+    const isFixedPos = this.isFixed || isFullscreen;
+    const targetX = isFixedPos ? bounds.minX : this.docBounds.docX;
+    const targetY = isFixedPos ? bounds.minY : this.docBounds.docY;
+    this.applyPosition(targetX, targetY, bounds.width, bounds.height, true, isFixedPos);
 
     // Content changed?
     if (text !== this.lastDetectedText) {
@@ -247,14 +250,16 @@ class QRBoxTracker {
     // High-frequency sync for media elements (IMG, VIDEO) moving or resizing on the page
     const isTrackedMedia = this.anchorElement && (this.anchorElement.tagName === 'IMG' || this.anchorElement.tagName === 'VIDEO');
     if (isTrackedMedia && this.anchorElement.isConnected && this.anchorOffset) {
+      const isFullscreen = typeof document !== 'undefined' && !!document.fullscreenElement;
+      const isFixedPos = this.isFixed || isFullscreen;
       const rect = this.anchorElement.getBoundingClientRect();
-      const scrollX = typeof window !== 'undefined' ? (window.pageXOffset || window.scrollX || 0) : 0;
-      const scrollY = typeof window !== 'undefined' ? (window.pageYOffset || window.scrollY || 0) : 0;
+      const scrollX = (!isFullscreen && typeof window !== 'undefined') ? (window.pageXOffset || window.scrollX || 0) : 0;
+      const scrollY = (!isFullscreen && typeof window !== 'undefined') ? (window.pageYOffset || window.scrollY || 0) : 0;
 
       // For document elements, compare document coordinates (rect.left + scrollX, rect.top + scrollY)
       // This is CONSTANT during scrolling, so scrolling consumes 0 CPU and doesn't dirty the DOM!
-      const docLeft = this.isFixed ? rect.left : (rect.left + scrollX);
-      const docTop = this.isFixed ? rect.top : (rect.top + scrollY);
+      const docLeft = isFixedPos ? rect.left : (rect.left + scrollX);
+      const docTop = isFixedPos ? rect.top : (rect.top + scrollY);
 
       if (
         docLeft === this.lastDocLeft &&
@@ -272,9 +277,9 @@ class QRBoxTracker {
 
       const pos = resolveAnchorPosition(this.anchorElement, this.anchorOffset);
       if (pos) {
-        const targetX = this.isFixed ? pos.x : pos.docX;
-        const targetY = this.isFixed ? pos.y : pos.docY;
-        this.applyPosition(targetX, targetY, pos.width, pos.height, pos.isVisible, this.isFixed);
+        const targetX = isFixedPos ? pos.x : pos.docX;
+        const targetY = isFixedPos ? pos.y : pos.docY;
+        this.applyPosition(targetX, targetY, pos.width, pos.height, pos.isVisible, isFixedPos);
       }
     }
   }
@@ -453,12 +458,11 @@ export class QROverlayManager {
       if (this.root && target && this.root.parentElement !== target) {
         target.appendChild(this.root);
       }
-      // Force position update on all active trackers
+      // Force position update and isFixed re-check on all active trackers
       for (const tracker of this.trackers.values()) {
-        if (tracker.anchorElement) {
-          tracker.lastDocLeft = null;
-          tracker.lastDocTop = null;
-        }
+        tracker._isFixedForAnchor = null;
+        tracker.lastDocLeft = null;
+        tracker.lastDocTop = null;
       }
     };
 

@@ -89,6 +89,11 @@ export function computeAnchorOffset(anchorEl, bounds) {
  * @returns {boolean}
  */
 export function isElementFixed(el) {
+  // When an element is in fullscreen, the entire fullscreen viewport is screen-relative;
+  // all elements inside it must be positioned without document scroll offsets.
+  if (typeof document !== 'undefined' && document.fullscreenElement) {
+    return true;
+  }
   if (!el || typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') {
     return false;
   }
@@ -117,10 +122,11 @@ export function resolveAnchorPosition(anchorEl, offset, viewport) {
     return null;
   }
 
+  const isFullscreen = typeof document !== 'undefined' && !!document.fullscreenElement;
   const vw = viewport?.innerWidth ?? (typeof window !== 'undefined' ? window.innerWidth : 1920);
   const vh = viewport?.innerHeight ?? (typeof window !== 'undefined' ? window.innerHeight : 1080);
-  const scrollX = typeof window !== 'undefined' ? (window.pageXOffset || window.scrollX || 0) : 0;
-  const scrollY = typeof window !== 'undefined' ? (window.pageYOffset || window.scrollY || 0) : 0;
+  const scrollX = (!isFullscreen && typeof window !== 'undefined') ? (window.pageXOffset || window.scrollX || 0) : 0;
+  const scrollY = (!isFullscreen && typeof window !== 'undefined') ? (window.pageYOffset || window.scrollY || 0) : 0;
 
   const rect = anchorEl.getBoundingClientRect();
 

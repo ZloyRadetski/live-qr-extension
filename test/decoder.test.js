@@ -36,6 +36,91 @@ test('decodeVideoCrops safely handles empty or null video inputs without throwin
   assert.ok(tabVideoRects instanceof Map);
 });
 
+test('decodeVideoCrops projects coordinates accurately with DPR mismatch (LibreWolf RFP simulation)', async () => {
+  const { decodeVideoCrops } = await import('../src/background/background.js');
+
+  // Generate a test QR code buffer
+  const payload = 'https://example.com/video-qr-pos-test';
+  const qrPngBuffer = await QRCode.toBuffer(payload, { width: 100, margin: 2 });
+  const qrPng = PNG.sync.read(qrPngBuffer);
+
+  // Simulate a 1920x1080 physical screenshot image with a video at CSS (200, 100, 800, 450)
+  // Scale is 1.25x (viewport 1536x864), but DPR is spoofed to 1.0 (LibreWolf RFP).
+  const imgW = 1920;
+  const imgH = 1080;
+  const videoCSS = { left: 200, top: 100, width: 800, height: 450 };
+  const scale = 1.25;
+
+  // Place QR inside video at physical offset (+200, +150) -> CSS offset (+160, +120)
+  const qrPhysOffsetX = 200;
+  const qrPhysOffsetY = 150;
+
+  let canvasW = 0, canvasH = 0;
+
+  global.document = {
+    createElement: (tag) => {
+      if (tag === 'canvas') {
+        return {
+          set width(w) { canvasW = w; },
+          get width() { return canvasW; },
+          set height(h) { canvasH = h; },
+          get height() { return canvasH; },
+          getContext: () => ({
+            drawImage: () => {},
+            getImageData: (x, y, w, h) => {
+              const data = new Uint8ClampedArray(w * h * 4);
+              data.fill(255);
+
+              for (let qy = 0; qy < qrPng.height; qy++) {
+                for (let qx = 0; qx < qrPng.width; qx++) {
+                  const targetX = qrPhysOffsetX + qx;
+                  const targetY = qrPhysOffsetY + qy;
+                  if (targetX >= 0 && targetX < w && targetY >= 0 && targetY < h) {
+                    const srcIdx = (qy * qrPng.width + qx) * 4;
+                    const dstIdx = (targetY * w + targetX) * 4;
+                    data[dstIdx] = qrPng.data[srcIdx];
+                    data[dstIdx + 1] = qrPng.data[srcIdx + 1];
+                    data[dstIdx + 2] = qrPng.data[srcIdx + 2];
+                    data[dstIdx + 3] = qrPng.data[srcIdx + 3];
+                  }
+                }
+              }
+              return { data, width: w, height: h };
+            }
+          })
+        };
+      }
+      return {};
+    }
+  };
+
+  const fakeImg = { width: imgW, height: imgH };
+  const videoInfo = {
+    rects: [videoCSS],
+    dpr: 1.0, // Spoofed by LibreWolf RFP!
+    viewportWidth: 1536,
+    viewportHeight: 864
+  };
+
+  const result = await decodeVideoCrops(fakeImg, videoInfo);
+
+  delete global.document;
+
+  assert.ok(result, 'decodeVideoCrops should return a result');
+  assert.equal(result.qrs.length, 1);
+  assert.equal(result.qrs[0].data, payload);
+
+  // Expected CSS position: videoCSS.left (200) + qrPhysOffsetX / scale (200 / 1.25 = 160) = 360
+  // and videoCSS.top (100) + qrPhysOffsetY / scale (150 / 1.25 = 120) = 220
+  const loc = result.qrs[0].location;
+  assert.ok(Math.abs(loc.topLeftCorner.x - 360) <= 8, `Expected x ~ 360, got ${loc.topLeftCorner.x}`);
+  assert.ok(Math.abs(loc.topLeftCorner.y - 220) <= 8, `Expected y ~ 220, got ${loc.topLeftCorner.y}`);
+
+  // scanWidth/Height must equal the CSS viewport so overlay scaleX/Y is 1.0
+  assert.equal(result.scanWidth, 1536);
+  assert.equal(result.scanHeight, 864);
+});
+
 test('computeFrameHash is unaffected by fetch-to-blob refactor (no regression)', async () => {
   const { computeFrameHash } = await import('../src/background/background.js');
 

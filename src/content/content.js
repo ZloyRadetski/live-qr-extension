@@ -30,22 +30,44 @@ async function getCachedContentSettings() {
 }
 
 let lastVideoRectsReportTime = 0;
+let videoResizeObserver = null;
+
+function observeVideoElement(v) {
+  if (typeof ResizeObserver === 'undefined' || !v) return;
+  if (!videoResizeObserver) {
+    videoResizeObserver = new ResizeObserver(() => {
+      reportVisibleVideoRects(true);
+    });
+  }
+  try {
+    videoResizeObserver.observe(v);
+  } catch {}
+}
 
 /**
  * Reports visible <video> element bounding rects to background worker for high-res crop scanning.
  * Time-throttled (500ms) + deduplicates: avoids spamming querySelectorAll and IPC.
+ * @param {boolean} [force=false] Bypasses throttle to report immediately (e.g. on fullscreen or resize).
  */
-function reportVisibleVideoRects() {
+function reportVisibleVideoRects(force = false) {
   const now = Date.now();
-  if (now - lastVideoRectsReportTime < 500) return;
+  if (!force && now - lastVideoRectsReportTime < 500) return;
   lastVideoRectsReportTime = now;
 
   const rects = getVisibleVideoRects();
   const key = rects.map((r) => `${r.left},${r.top},${r.width},${r.height}`).join(';');
-  if (key === lastReportedVideoKey) {
+  if (!force && key === lastReportedVideoKey) {
     return;
   }
   lastReportedVideoKey = key;
+
+  // Track any videos with ResizeObserver so mode switches (Theater mode, expand) notify background immediately
+  if (typeof document !== 'undefined') {
+    const vids = document.querySelectorAll('video');
+    for (const v of vids) {
+      observeVideoElement(v);
+    }
+  }
 
   try {
     browser.runtime.sendMessage({
@@ -325,13 +347,19 @@ window.addEventListener('scroll', () => {
   }, 140);
 }, { passive: true });
 
-// Resize listener
+// Resize and fullscreen listeners: instantly update video rects
 window.addEventListener('resize', () => {
-  reportVisibleVideoRects();
+  reportVisibleVideoRects(true);
   if (overlay) {
     overlay.onScroll();
   }
 }, { passive: true });
+
+const onFullscreenChange = () => {
+  reportVisibleVideoRects(true);
+};
+document.addEventListener('fullscreenchange', onFullscreenChange);
+document.addEventListener('webkitfullscreenchange', onFullscreenChange);
 
 // SPA Navigation support (YouTube yt-navigate-finish, popstate, hashchange)
 function onSpaNavigation() {

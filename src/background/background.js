@@ -246,29 +246,57 @@ export async function decodeVideoCrops(img, videoInfo, maxDim = 1920) {
   const { cropCanvas: cCanvas, cropCtx: cCtx } = getCropCanvas();
   if (!cCanvas || !cCtx) return null;
 
-  const dpr = videoInfo.dpr || 1;
   const imgW = img.naturalWidth || img.width;
   const imgH = img.naturalHeight || img.height;
+
+  // True scale ratio between physical screenshot bitmap pixels and CSS viewport pixels.
+  // In LibreWolf / privacy.resistFingerprinting, window.devicePixelRatio is spoofed (e.g. 1.0),
+  // but captureVisibleTab returns physical screen resolution (e.g. 1.25x or 1.5x on Windows).
+  // Comparing img dimensions to viewport dimensions yields the exact physical-to-CSS ratio.
+  const scaleX = videoInfo.viewportWidth ? (imgW / videoInfo.viewportWidth) : (videoInfo.dpr || 1);
+  const scaleY = videoInfo.viewportHeight ? (imgH / videoInfo.viewportHeight) : (videoInfo.dpr || 1);
   const qrs = [];
 
   for (const rect of videoInfo.rects) {
-    // Source crop at full DPR resolution
-    let srcX = Math.round(rect.left * dpr);
-    let srcY = Math.round(rect.top * dpr);
-    let srcW = Math.round(rect.width * dpr);
-    let srcH = Math.round(rect.height * dpr);
+    // Unclipped target crop coordinates in physical screenshot pixels
+    const rawSrcX = Math.round(rect.left * scaleX);
+    const rawSrcY = Math.round(rect.top * scaleY);
+    const rawSrcW = Math.round(rect.width * scaleX);
+    const rawSrcH = Math.round(rect.height * scaleY);
 
-    // Bounds check
-    if (srcX < 0) { srcW += srcX; srcX = 0; }
-    if (srcY < 0) { srcH += srcY; srcY = 0; }
-    if (srcX + srcW > imgW) srcW = imgW - srcX;
-    if (srcY + srcH > imgH) srcH = imgH - srcY;
+    // Visible crop coordinates clamped to screenshot boundaries
+    let srcX = rawSrcX;
+    let srcY = rawSrcY;
+    let srcW = rawSrcW;
+    let srcH = rawSrcH;
+
+    // Track how many physical pixels were clipped off the left and top edges
+    let clipLeft = 0;
+    let clipTop = 0;
+
+    if (srcX < 0) {
+      clipLeft = -srcX;
+      srcW += srcX;
+      srcX = 0;
+    }
+    if (srcY < 0) {
+      clipTop = -srcY;
+      srcH += srcY;
+      srcY = 0;
+    }
+    if (srcX + srcW > imgW) {
+      srcW = imgW - srcX;
+    }
+    if (srcY + srcH > imgH) {
+      srcH = imgH - srcY;
+    }
 
     if (srcW < 24 || srcH < 24) continue;
 
     // Preserve resolution up to maxDim (default 1080p+) so small QR codes in videos survive
     const maxCropDim = Math.max(maxDim, 1080);
-    let drawW = srcW, drawH = srcH;
+    let drawW = srcW;
+    let drawH = srcH;
     if (drawW > maxCropDim || drawH > maxCropDim) {
       const ratio = Math.min(maxCropDim / drawW, maxCropDim / drawH);
       drawW = Math.round(drawW * ratio);
@@ -290,24 +318,31 @@ export async function decodeVideoCrops(img, videoInfo, maxDim = 1920) {
     // Transfer buffer ownership to Worker — no memory copy
     const cropQrs = await decodeWithWorker(imgData.data.buffer, drawW, drawH, 3);
 
+    // Projects a point inside the crop canvas back to viewport CSS coordinates:
+    // (clipLeft + p.x * scaleBackX) gives the offset within the unclipped video in physical pixels;
+    // dividing by scaleX converts to CSS pixels, and adding rect.left anchors it in the viewport.
+    const mapPoint = (p) => ({
+      x: rect.left + ((clipLeft + p.x * scaleBackX) / scaleX),
+      y: rect.top  + ((clipTop  + p.y * scaleBackY) / scaleY)
+    });
+
     for (const qr of cropQrs) {
       const loc = qr.location;
-      // Project downsampled crop coordinates back to viewport CSS coordinates
       qrs.push({
         data: qr.data,
         location: {
-          topLeftCorner:     { x: (srcX + loc.topLeftCorner.x     * scaleBackX) / dpr, y: (srcY + loc.topLeftCorner.y     * scaleBackY) / dpr },
-          topRightCorner:    { x: (srcX + loc.topRightCorner.x    * scaleBackX) / dpr, y: (srcY + loc.topRightCorner.y    * scaleBackY) / dpr },
-          bottomRightCorner: { x: (srcX + loc.bottomRightCorner.x * scaleBackX) / dpr, y: (srcY + loc.bottomRightCorner.y * scaleBackY) / dpr },
-          bottomLeftCorner:  { x: (srcX + loc.bottomLeftCorner.x  * scaleBackX) / dpr, y: (srcY + loc.bottomLeftCorner.y  * scaleBackY) / dpr }
+          topLeftCorner:     mapPoint(loc.topLeftCorner),
+          topRightCorner:    mapPoint(loc.topRightCorner),
+          bottomRightCorner: mapPoint(loc.bottomRightCorner),
+          bottomLeftCorner:  mapPoint(loc.bottomLeftCorner)
         }
       });
     }
   }
 
   if (qrs.length > 0) {
-    const vw = videoInfo.viewportWidth || Math.round(imgW / dpr);
-    const vh = videoInfo.viewportHeight || Math.round(imgH / dpr);
+    const vw = videoInfo.viewportWidth || Math.round(imgW / scaleX);
+    const vh = videoInfo.viewportHeight || Math.round(imgH / scaleY);
     return { qrs, qr: qrs[0], scanWidth: vw, scanHeight: vh, isDirectCrop: true };
   }
 

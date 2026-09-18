@@ -170,6 +170,11 @@
       bottomLeftCorner: lerpPoint(current.bottomLeftCorner, target.bottomLeftCorner, factor)
     };
   }
+  function distance(p1, p2) {
+    const dx = p1.x - p2.x;
+    const dy = p1.y - p2.y;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
   function areBoundsNear(b1, b2, maxDistance = 60) {
     if (!b1 || !b2) return false;
     const dx = b1.centerX - b2.centerX;
@@ -314,6 +319,9 @@
     };
   }
   function isElementFixed(el) {
+    if (typeof document !== "undefined" && document.fullscreenElement) {
+      return true;
+    }
     if (!el || typeof window === "undefined" || typeof window.getComputedStyle !== "function") {
       return false;
     }
@@ -333,10 +341,11 @@
     if (!anchorEl || typeof anchorEl.isConnected === "boolean" && !anchorEl.isConnected) {
       return null;
     }
+    const isFullscreen = typeof document !== "undefined" && !!document.fullscreenElement;
     const vw = viewport?.innerWidth ?? (typeof window !== "undefined" ? window.innerWidth : 1920);
     const vh = viewport?.innerHeight ?? (typeof window !== "undefined" ? window.innerHeight : 1080);
-    const scrollX = typeof window !== "undefined" ? window.pageXOffset || window.scrollX || 0 : 0;
-    const scrollY = typeof window !== "undefined" ? window.pageYOffset || window.scrollY || 0 : 0;
+    const scrollX = !isFullscreen && typeof window !== "undefined" ? window.pageXOffset || window.scrollX || 0 : 0;
+    const scrollY = !isFullscreen && typeof window !== "undefined" ? window.pageYOffset || window.scrollY || 0 : 0;
     const rect = anchorEl.getBoundingClientRect();
     let x2, y2, width, height;
     if (offset.relX !== void 0 && offset.initialWidth > 0 && Math.abs(rect.width - offset.initialWidth) > 1.5) {
@@ -2753,7 +2762,8 @@
         this.isDomLocked = true;
         if (anchorEl) this.anchorElement = anchorEl;
       }
-      this.currentLocation = isDom ? targetLoc : this.currentLocation ? lerpLocation(this.currentLocation, targetLoc, 0.45) : targetLoc;
+      const shouldSnap = !this.currentLocation || isDom || this.currentLocation && distance(this.currentLocation.topLeftCorner, targetLoc.topLeftCorner) > 20;
+      this.currentLocation = shouldSnap ? targetLoc : lerpLocation(this.currentLocation, targetLoc, 0.6);
       const bounds = computeBounds(this.currentLocation);
       this.cachedBounds = bounds;
       const prevAnchor = this.anchorElement;
@@ -2773,17 +2783,19 @@
           this.boxElement.classList.remove("qr-fixed-anchor");
         }
       }
-      const scrollX = typeof window !== "undefined" ? window.pageXOffset || window.scrollX || 0 : 0;
-      const scrollY = typeof window !== "undefined" ? window.pageYOffset || window.scrollY || 0 : 0;
+      const isFullscreen = typeof document !== "undefined" && !!document.fullscreenElement;
+      const scrollX = !isFullscreen && typeof window !== "undefined" ? window.pageXOffset || window.scrollX || 0 : 0;
+      const scrollY = !isFullscreen && typeof window !== "undefined" ? window.pageYOffset || window.scrollY || 0 : 0;
       this.docBounds = {
         docX: bounds.minX + scrollX,
         docY: bounds.minY + scrollY,
         width: bounds.width,
         height: bounds.height
       };
-      const targetX = this.isFixed ? bounds.minX : this.docBounds.docX;
-      const targetY = this.isFixed ? bounds.minY : this.docBounds.docY;
-      this.applyPosition(targetX, targetY, bounds.width, bounds.height, true, this.isFixed);
+      const isFixedPos = this.isFixed || isFullscreen;
+      const targetX = isFixedPos ? bounds.minX : this.docBounds.docX;
+      const targetY = isFixedPos ? bounds.minY : this.docBounds.docY;
+      this.applyPosition(targetX, targetY, bounds.width, bounds.height, true, isFixedPos);
       if (text !== this.lastDetectedText) {
         const isInitial = this.lastDetectedText === null;
         this.lastDetectedText = text;
@@ -2868,11 +2880,13 @@
       }
       const isTrackedMedia = this.anchorElement && (this.anchorElement.tagName === "IMG" || this.anchorElement.tagName === "VIDEO");
       if (isTrackedMedia && this.anchorElement.isConnected && this.anchorOffset) {
+        const isFullscreen = typeof document !== "undefined" && !!document.fullscreenElement;
+        const isFixedPos = this.isFixed || isFullscreen;
         const rect = this.anchorElement.getBoundingClientRect();
-        const scrollX = typeof window !== "undefined" ? window.pageXOffset || window.scrollX || 0 : 0;
-        const scrollY = typeof window !== "undefined" ? window.pageYOffset || window.scrollY || 0 : 0;
-        const docLeft = this.isFixed ? rect.left : rect.left + scrollX;
-        const docTop = this.isFixed ? rect.top : rect.top + scrollY;
+        const scrollX = !isFullscreen && typeof window !== "undefined" ? window.pageXOffset || window.scrollX || 0 : 0;
+        const scrollY = !isFullscreen && typeof window !== "undefined" ? window.pageYOffset || window.scrollY || 0 : 0;
+        const docLeft = isFixedPos ? rect.left : rect.left + scrollX;
+        const docTop = isFixedPos ? rect.top : rect.top + scrollY;
         if (docLeft === this.lastDocLeft && docTop === this.lastDocTop && rect.width === this.lastDocWidth && rect.height === this.lastDocHeight) {
           return;
         }
@@ -2882,9 +2896,9 @@
         this.lastDocHeight = rect.height;
         const pos = resolveAnchorPosition(this.anchorElement, this.anchorOffset);
         if (pos) {
-          const targetX = this.isFixed ? pos.x : pos.docX;
-          const targetY = this.isFixed ? pos.y : pos.docY;
-          this.applyPosition(targetX, targetY, pos.width, pos.height, pos.isVisible, this.isFixed);
+          const targetX = isFixedPos ? pos.x : pos.docX;
+          const targetY = isFixedPos ? pos.y : pos.docY;
+          this.applyPosition(targetX, targetY, pos.width, pos.height, pos.isVisible, isFixedPos);
         }
       }
     }
@@ -3046,10 +3060,9 @@
           target.appendChild(this.root);
         }
         for (const tracker of this.trackers.values()) {
-          if (tracker.anchorElement) {
-            tracker.lastDocLeft = null;
-            tracker.lastDocTop = null;
-          }
+          tracker._isFixedForAnchor = null;
+          tracker.lastDocLeft = null;
+          tracker.lastDocTop = null;
         }
       };
       document.addEventListener("fullscreenchange", this.fullscreenHandler);
@@ -3381,16 +3394,35 @@
     return cachedContentSettings;
   }
   var lastVideoRectsReportTime = 0;
-  function reportVisibleVideoRects() {
+  var videoResizeObserver = null;
+  function observeVideoElement(v2) {
+    if (typeof ResizeObserver === "undefined" || !v2) return;
+    if (!videoResizeObserver) {
+      videoResizeObserver = new ResizeObserver(() => {
+        reportVisibleVideoRects(true);
+      });
+    }
+    try {
+      videoResizeObserver.observe(v2);
+    } catch {
+    }
+  }
+  function reportVisibleVideoRects(force = false) {
     const now = Date.now();
-    if (now - lastVideoRectsReportTime < 500) return;
+    if (!force && now - lastVideoRectsReportTime < 500) return;
     lastVideoRectsReportTime = now;
     const rects = getVisibleVideoRects();
     const key = rects.map((r2) => `${r2.left},${r2.top},${r2.width},${r2.height}`).join(";");
-    if (key === lastReportedVideoKey) {
+    if (!force && key === lastReportedVideoKey) {
       return;
     }
     lastReportedVideoKey = key;
+    if (typeof document !== "undefined") {
+      const vids = document.querySelectorAll("video");
+      for (const v2 of vids) {
+        observeVideoElement(v2);
+      }
+    }
     try {
       browser.runtime.sendMessage({
         type: "VIDEO_RECTS_UPDATE",
@@ -3615,11 +3647,16 @@
     }, 140);
   }, { passive: true });
   window.addEventListener("resize", () => {
-    reportVisibleVideoRects();
+    reportVisibleVideoRects(true);
     if (overlay) {
       overlay.onScroll();
     }
   }, { passive: true });
+  var onFullscreenChange = () => {
+    reportVisibleVideoRects(true);
+  };
+  document.addEventListener("fullscreenchange", onFullscreenChange);
+  document.addEventListener("webkitfullscreenchange", onFullscreenChange);
   function onSpaNavigation() {
     getCachedContentSettings().then((settings) => {
       if (settings && settings.globalActive) {

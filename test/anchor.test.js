@@ -118,3 +118,38 @@ test('isElementFixed detects fixed positioning on element or parent hierarchy', 
   delete global.window;
   delete global.document;
 });
+
+test('fullscreen mode treats elements as fixed and eliminates document scroll offsets', () => {
+  global.window = {
+    pageXOffset: 250,
+    pageYOffset: 450,
+    scrollX: 250,
+    scrollY: 450,
+    innerWidth: 1920,
+    innerHeight: 1080
+  };
+  global.document = {
+    fullscreenElement: { id: 'player' }
+  };
+
+  const videoElement = {
+    isConnected: true,
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 1920, height: 1080 })
+  };
+
+  // isElementFixed must return true during fullscreen
+  assert.equal(isElementFixed(videoElement), true);
+
+  // resolveAnchorPosition must NOT add scrollX/scrollY when in fullscreen
+  const offset = { offsetX: 500, offsetY: 300, width: 120, height: 120 };
+  const resolved = resolveAnchorPosition(videoElement, offset);
+  assert.ok(resolved);
+  assert.equal(resolved.x, 500);
+  assert.equal(resolved.y, 300);
+  assert.equal(resolved.docX, 500, 'docX must equal x without scrollX offset in fullscreen');
+  assert.equal(resolved.docY, 300, 'docY must equal y without scrollY offset in fullscreen');
+
+  delete global.window;
+  delete global.document;
+});
+

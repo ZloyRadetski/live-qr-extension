@@ -2361,28 +2361,42 @@
     if (!videoInfo || !videoInfo.rects || videoInfo.rects.length === 0) return null;
     const { cropCanvas: cCanvas, cropCtx: cCtx } = getCropCanvas();
     if (!cCanvas || !cCtx) return null;
-    const dpr = videoInfo.dpr || 1;
     const imgW = img.naturalWidth || img.width;
     const imgH = img.naturalHeight || img.height;
+    const scaleX = videoInfo.viewportWidth ? imgW / videoInfo.viewportWidth : videoInfo.dpr || 1;
+    const scaleY = videoInfo.viewportHeight ? imgH / videoInfo.viewportHeight : videoInfo.dpr || 1;
     const qrs = [];
     for (const rect of videoInfo.rects) {
-      let srcX = Math.round(rect.left * dpr);
-      let srcY = Math.round(rect.top * dpr);
-      let srcW = Math.round(rect.width * dpr);
-      let srcH = Math.round(rect.height * dpr);
+      const rawSrcX = Math.round(rect.left * scaleX);
+      const rawSrcY = Math.round(rect.top * scaleY);
+      const rawSrcW = Math.round(rect.width * scaleX);
+      const rawSrcH = Math.round(rect.height * scaleY);
+      let srcX = rawSrcX;
+      let srcY = rawSrcY;
+      let srcW = rawSrcW;
+      let srcH = rawSrcH;
+      let clipLeft = 0;
+      let clipTop = 0;
       if (srcX < 0) {
+        clipLeft = -srcX;
         srcW += srcX;
         srcX = 0;
       }
       if (srcY < 0) {
+        clipTop = -srcY;
         srcH += srcY;
         srcY = 0;
       }
-      if (srcX + srcW > imgW) srcW = imgW - srcX;
-      if (srcY + srcH > imgH) srcH = imgH - srcY;
+      if (srcX + srcW > imgW) {
+        srcW = imgW - srcX;
+      }
+      if (srcY + srcH > imgH) {
+        srcH = imgH - srcY;
+      }
       if (srcW < 24 || srcH < 24) continue;
       const maxCropDim = Math.max(maxDim, 1080);
-      let drawW = srcW, drawH = srcH;
+      let drawW = srcW;
+      let drawH = srcH;
       if (drawW > maxCropDim || drawH > maxCropDim) {
         const ratio = Math.min(maxCropDim / drawW, maxCropDim / drawH);
         drawW = Math.round(drawW * ratio);
@@ -2397,22 +2411,26 @@
       const scaleBackX = srcW / drawW;
       const scaleBackY = srcH / drawH;
       const cropQrs = await decodeWithWorker(imgData.data.buffer, drawW, drawH, 3);
+      const mapPoint = (p2) => ({
+        x: rect.left + (clipLeft + p2.x * scaleBackX) / scaleX,
+        y: rect.top + (clipTop + p2.y * scaleBackY) / scaleY
+      });
       for (const qr of cropQrs) {
         const loc = qr.location;
         qrs.push({
           data: qr.data,
           location: {
-            topLeftCorner: { x: (srcX + loc.topLeftCorner.x * scaleBackX) / dpr, y: (srcY + loc.topLeftCorner.y * scaleBackY) / dpr },
-            topRightCorner: { x: (srcX + loc.topRightCorner.x * scaleBackX) / dpr, y: (srcY + loc.topRightCorner.y * scaleBackY) / dpr },
-            bottomRightCorner: { x: (srcX + loc.bottomRightCorner.x * scaleBackX) / dpr, y: (srcY + loc.bottomRightCorner.y * scaleBackY) / dpr },
-            bottomLeftCorner: { x: (srcX + loc.bottomLeftCorner.x * scaleBackX) / dpr, y: (srcY + loc.bottomLeftCorner.y * scaleBackY) / dpr }
+            topLeftCorner: mapPoint(loc.topLeftCorner),
+            topRightCorner: mapPoint(loc.topRightCorner),
+            bottomRightCorner: mapPoint(loc.bottomRightCorner),
+            bottomLeftCorner: mapPoint(loc.bottomLeftCorner)
           }
         });
       }
     }
     if (qrs.length > 0) {
-      const vw = videoInfo.viewportWidth || Math.round(imgW / dpr);
-      const vh = videoInfo.viewportHeight || Math.round(imgH / dpr);
+      const vw = videoInfo.viewportWidth || Math.round(imgW / scaleX);
+      const vh = videoInfo.viewportHeight || Math.round(imgH / scaleY);
       return { qrs, qr: qrs[0], scanWidth: vw, scanHeight: vh, isDirectCrop: true };
     }
     return null;
