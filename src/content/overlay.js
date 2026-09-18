@@ -32,6 +32,10 @@ class QRBoxTracker {
     this.maxMissingFrames = 8;
     this.lastWidth = 0;
     this.lastHeight = 0;
+    this.lastAnchorRectLeft = null;
+    this.lastAnchorRectTop = null;
+    this.lastAnchorRectWidth = null;
+    this.lastAnchorRectHeight = null;
 
     this.createDom();
   }
@@ -131,7 +135,9 @@ class QRBoxTracker {
     }
 
     this.boxElement.style.visibility = 'visible';
-    this.boxElement.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0)`;
+    const rx = Math.round(x * 10) / 10;
+    const ry = Math.round(y * 10) / 10;
+    this.boxElement.style.transform = `translate3d(${rx}px, ${ry}px, 0)`;
 
     if (width > 0 && this.lastWidth !== width) {
       this.lastWidth = width;
@@ -148,6 +154,38 @@ class QRBoxTracker {
       this.hudCard.classList.add('qr-flipped');
     } else {
       this.hudCard.classList.remove('qr-flipped');
+    }
+  }
+
+  /**
+   * High-frequency rAF position sync: tracks moving/animating anchor elements.
+   * Compares previous rect coordinates to eliminate layout thrashing if still.
+   */
+  updateLivePosition() {
+    if (!this.boxElement || this.boxElement.classList.contains('qr-hidden')) {
+      return;
+    }
+
+    if (this.anchorElement && this.anchorElement.isConnected && this.anchorOffset) {
+      const rect = this.anchorElement.getBoundingClientRect();
+      if (
+        rect.left === this.lastAnchorRectLeft &&
+        rect.top === this.lastAnchorRectTop &&
+        rect.width === this.lastAnchorRectWidth &&
+        rect.height === this.lastAnchorRectHeight
+      ) {
+        return; // Exact same position on screen, 0 CPU cost
+      }
+
+      this.lastAnchorRectLeft = rect.left;
+      this.lastAnchorRectTop = rect.top;
+      this.lastAnchorRectWidth = rect.width;
+      this.lastAnchorRectHeight = rect.height;
+
+      const pos = resolveAnchorPosition(this.anchorElement, this.anchorOffset);
+      if (pos) {
+        this.applyPosition(pos.x, pos.y, pos.width, pos.height, pos.isVisible);
+      }
     }
   }
 
@@ -285,6 +323,7 @@ export class QROverlayManager {
 
     this.root = null;
     this.trackers = new Map(); // id -> QRBoxTracker
+    this.rafId = null;
     this.isScrolling = false;
     this.scrollTimer = null;
     this.audioCtx = null;
@@ -410,6 +449,12 @@ export class QROverlayManager {
           this.trackers.delete(id);
         }
       }
+    }
+
+    if (this.trackers.size > 0) {
+      this.startTrackingLoop();
+    } else {
+      this.stopTrackingLoop();
     }
   }
 
@@ -604,9 +649,49 @@ export class QROverlayManager {
   }
 
   /**
+   * Monitor refresh rate (60/120/144 Hz) position tracking loop.
+   * Only active while visible trackers exist on screen (0% idle CPU).
+   */
+  startTrackingLoop() {
+    if (this.rafId || typeof requestAnimationFrame === 'undefined') return;
+
+    const tick = () => {
+      if (!this.root || this.trackers.size === 0) {
+        this.rafId = null;
+        return;
+      }
+
+      let activeCount = 0;
+      for (const tracker of this.trackers.values()) {
+        if (!tracker.boxElement || tracker.boxElement.classList.contains('qr-hidden')) {
+          continue;
+        }
+        activeCount++;
+        tracker.updateLivePosition();
+      }
+
+      if (activeCount > 0) {
+        this.rafId = requestAnimationFrame(tick);
+      } else {
+        this.rafId = null;
+      }
+    };
+
+    this.rafId = requestAnimationFrame(tick);
+  }
+
+  stopTrackingLoop() {
+    if (this.rafId && typeof cancelAnimationFrame !== 'undefined') {
+      cancelAnimationFrame(this.rafId);
+      this.rafId = null;
+    }
+  }
+
+  /**
    * Unmounts overlay and cleans up all trackers.
    */
   unmount() {
+    this.stopTrackingLoop();
     if (this.scrollTimer) {
       clearTimeout(this.scrollTimer);
       this.scrollTimer = null;

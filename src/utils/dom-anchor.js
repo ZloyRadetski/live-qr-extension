@@ -69,18 +69,27 @@ export function computeAnchorOffset(anchorEl, bounds) {
   }
 
   const rect = anchorEl.getBoundingClientRect();
+  const initialWidth = rect.width || 1;
+  const initialHeight = rect.height || 1;
+
   return {
     offsetX: bounds.minX - rect.left,
     offsetY: bounds.minY - rect.top,
     width: bounds.width,
-    height: bounds.height
+    height: bounds.height,
+    relX: (bounds.minX - rect.left) / initialWidth,
+    relY: (bounds.minY - rect.top) / initialHeight,
+    relW: bounds.width / initialWidth,
+    relH: bounds.height / initialHeight,
+    initialWidth,
+    initialHeight
   };
 }
 
 /**
  * Resolves current viewport position of the anchor.
  * @param {HTMLElement} anchorEl
- * @param {{ offsetX: number, offsetY: number, width: number, height: number }} offset
+ * @param {{ offsetX: number, offsetY: number, width: number, height: number, relX?: number, relY?: number, relW?: number, relH?: number, initialWidth?: number }} offset
  * @param {{ innerWidth: number, innerHeight: number }} [viewport]
  * @returns {{ x: number, y: number, width: number, height: number, isVisible: boolean } | null}
  */
@@ -93,21 +102,33 @@ export function resolveAnchorPosition(anchorEl, offset, viewport) {
   const vh = viewport?.innerHeight ?? (typeof window !== 'undefined' ? window.innerHeight : 1080);
 
   const rect = anchorEl.getBoundingClientRect();
-  const x = rect.left + offset.offsetX;
-  const y = rect.top + offset.offsetY;
+
+  // If the anchor element was scaled/resized (e.g. CSS hover scale or responsive resize), adapt bounds proportionally
+  let x, y, width, height;
+  if (offset.relX !== undefined && offset.initialWidth > 0 && Math.abs(rect.width - offset.initialWidth) > 1.5) {
+    width = rect.width * offset.relW;
+    height = rect.height * offset.relH;
+    x = rect.left + rect.width * offset.relX;
+    y = rect.top + rect.height * offset.relY;
+  } else {
+    x = rect.left + offset.offsetX;
+    y = rect.top + offset.offsetY;
+    width = offset.width;
+    height = offset.height;
+  }
 
   const isVisible = (
-    y + offset.height >= -10 &&
+    y + height >= -10 &&
     y <= vh + 10 &&
-    x + offset.width >= -10 &&
+    x + width >= -10 &&
     x <= vw + 10
   );
 
   return {
     x,
     y,
-    width: offset.width,
-    height: offset.height,
+    width,
+    height,
     isVisible
   };
 }

@@ -54,3 +54,25 @@ test('resolveAnchorPosition marks elements scrolled out of view as hidden', () =
   assert.ok(resolved);
   assert.equal(resolved.isVisible, false);
 });
+
+test('resolveAnchorPosition scales proportionally when anchor element resizes', () => {
+  const originalEl = {
+    getBoundingClientRect: () => ({ left: 100, top: 100, width: 200, height: 200 })
+  };
+  const bounds = { minX: 150, minY: 150, width: 50, height: 50 };
+  const offset = computeAnchorOffset(originalEl, bounds);
+
+  // Element scaled by 2x (e.g. zoom, CSS transform scale, or responsive layout)
+  const scaledEl = {
+    isConnected: true,
+    getBoundingClientRect: () => ({ left: 100, top: 100, width: 400, height: 400 })
+  };
+
+  const resolved = resolveAnchorPosition(scaledEl, offset, { innerWidth: 1000, innerHeight: 800 });
+  assert.ok(resolved);
+  // In 200px element, QR was at 50px (25%). In 400px element, it should be at 100px (25%) -> x = 200
+  assert.equal(resolved.x, 200);
+  assert.equal(resolved.y, 200);
+  assert.equal(resolved.width, 100);
+  assert.equal(resolved.height, 100);
+});

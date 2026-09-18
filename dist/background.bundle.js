@@ -10295,6 +10295,21 @@
   var isWindowFocused = true;
   var hasActiveQR = false;
   var loopTimer = null;
+  var cachedSettings = null;
+  var currentActiveTab = null;
+  async function getCachedSettings() {
+    if (!cachedSettings) {
+      cachedSettings = await getSettings();
+    }
+    return cachedSettings;
+  }
+  async function getActiveTab() {
+    if (!currentActiveTab || !currentActiveTab.id) {
+      const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+      currentActiveTab = tab || null;
+    }
+    return currentActiveTab;
+  }
   var canvas = null;
   var ctx = null;
   var cachedImg = null;
@@ -10368,14 +10383,14 @@
     }
     isLoopRunning = true;
     const loopStartTime = performance.now();
-    const settings = await getSettings();
+    const settings = await getCachedSettings();
     const shouldPauseForScroll = settings.pauseOnScroll !== false && isTabScrolling;
     if (!isWindowFocused || shouldPauseForScroll) {
       setTimeout(globalCaptureLoop, 120);
       return;
     }
     try {
-      const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+      const tab = await getActiveTab();
       if (tab && tab.id && tab.windowId && !tab.url?.startsWith("about:")) {
         if (isDomainBlacklisted(tab.url, settings.blacklist)) {
           setTimeout(globalCaptureLoop, 500);
@@ -10383,13 +10398,13 @@
         }
         const resolution = settings.scanResolution || "1080";
         let maxW = 1080;
-        let quality = 85;
+        let quality = 75;
         if (resolution === "720") {
           maxW = 720;
-          quality = 70;
+          quality = 65;
         } else if (resolution === "1440") {
           maxW = 1440;
-          quality = 90;
+          quality = 80;
         }
         const dataUrl = await browser.tabs.captureVisibleTab(tab.windowId, {
           format: "jpeg",
@@ -10428,7 +10443,7 @@
     } catch (err) {
     }
     if (isGlobalActive) {
-      const settings2 = await getSettings();
+      const settings2 = await getCachedSettings();
       const baseFps = Math.max(1, Math.min(120, settings2.scanRate || 12));
       const targetInterval = Math.round(1e3 / baseFps);
       const elapsed = performance.now() - loopStartTime;
@@ -10489,12 +10504,14 @@
   if (browser.windows && browser.windows.onFocusChanged) {
     browser.windows.onFocusChanged.addListener((windowId) => {
       isWindowFocused = windowId !== browser.windows.WINDOW_ID_NONE;
+      currentActiveTab = null;
       if (isWindowFocused && isGlobalActive && !isLoopRunning) {
         globalCaptureLoop();
       }
     });
   }
   browser.tabs.onActivated.addListener(async ({ tabId }) => {
+    currentActiveTab = null;
     if (isGlobalActive) {
       hasActiveQR = false;
       await ensureInjected(tabId);
@@ -10503,6 +10520,9 @@
     }
   });
   browser.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+    if (changeInfo.status === "complete" || changeInfo.url) {
+      currentActiveTab = null;
+    }
     if (isGlobalActive && changeInfo.status === "complete" && tab.active) {
       await ensureInjected(tabId);
       browser.tabs.sendMessage(tabId, { type: "SCANNER_STARTED" }).catch(() => {
@@ -10537,6 +10557,9 @@
         return false;
       }
       case "SETTINGS_UPDATED": {
+        if (message.settings) {
+          cachedSettings = message.settings;
+        }
         if (isGlobalActive) {
           if (loopTimer) {
             clearTimeout(loopTimer);
