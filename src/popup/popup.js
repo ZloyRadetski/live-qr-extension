@@ -122,14 +122,14 @@ function updateUIState(active) {
 
   if (active) {
     statusBadge.className = 'status-badge status-active';
-    statusLabel.textContent = 'Active (All Tabs)';
+    statusLabel.textContent = 'Active';
     toggleBtn.classList.add('scanning');
-    toggleLabel.textContent = 'Turn OFF Scanner';
+    toggleLabel.textContent = 'Stop Scanner';
   } else {
     statusBadge.className = 'status-badge status-idle';
     statusLabel.textContent = 'Off';
     toggleBtn.classList.remove('scanning');
-    toggleLabel.textContent = 'Turn ON Scanner (Everywhere)';
+    toggleLabel.textContent = 'Start Scanner';
   }
 }
 
@@ -141,11 +141,12 @@ function updateFpsUI(fps) {
   if (fpsSlider) {
     fpsSlider.value = fps;
     const pct = ((fps - 1) / (120 - 1)) * 100;
-    fpsSlider.style.background = `linear-gradient(to right, var(--accent-cyan) 0%, var(--accent-cyan) ${pct}%, var(--bg-tertiary) ${pct}%, var(--bg-tertiary) 100%)`;
+    fpsSlider.style.background = `linear-gradient(to right, var(--accent-primary) 0%, var(--accent-primary) ${pct}%, var(--bg-tertiary) ${pct}%, var(--bg-tertiary) 100%)`;
   }
   if (fpsValueBadge) {
     let modeHint = '';
     if (fps <= 5) modeHint = ' (Eco)';
+    else if (fps === 12) modeHint = ' (Balanced)';
     else if (fps === 30) modeHint = ' (Std)';
     else if (fps === 60) modeHint = ' (Smooth)';
     else if (fps >= 120) modeHint = ' (Max)';
