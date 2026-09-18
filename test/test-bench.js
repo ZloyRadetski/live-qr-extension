@@ -4,6 +4,7 @@
  */
 
 import QRCode from 'qrcode';
+import { QROverlayManager } from '../src/content/overlay.js';
 
 // Setup sample QRs
 async function renderSampleQRs() {
@@ -153,7 +154,7 @@ function setupInPageSimulation() {
   const simBtn = document.getElementById('simulate-hud-btn');
   if (!simBtn) return;
 
-  simBtn.addEventListener('click', async () => {
+  simBtn.addEventListener('click', () => {
     const existing = document.getElementById('qr-radar-root');
     if (existing) {
       existing.remove();
@@ -163,8 +164,6 @@ function setupInPageSimulation() {
 
     simBtn.textContent = 'Hide Simulated HUD';
 
-    // Dynamically load overlay modules
-    const { QROverlayManager } = await import('../src/content/overlay.js');
     const overlay = new QROverlayManager({
       soundEnabled: true,
       autoCopy: false,
@@ -194,9 +193,15 @@ function setupInPageSimulation() {
   });
 }
 
-document.addEventListener('DOMContentLoaded', () => {
+function initTestBench() {
   renderSampleQRs();
   setupCustomGenerator();
   setupAnimatedCanvas();
   setupInPageSimulation();
-});
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initTestBench);
+} else {
+  initTestBench();
+}

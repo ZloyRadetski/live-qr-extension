@@ -58,7 +58,7 @@ async function build() {
     entryPoints: ['test/test-bench.js'],
     bundle: true,
     outfile: 'test/test-bench.bundle.js',
-    format: 'esm',
+    format: 'iife',
     sourcemap: false
   });
 
