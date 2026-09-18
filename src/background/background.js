@@ -142,22 +142,50 @@ async function decodeWithWorker(buffer, width, height, maxQRs = 4) {
   return [];
 }
 
+const B64_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+const B64_LOOKUP = new Uint8Array(256);
+for (let i = 0; i < B64_CHARS.length; i++) {
+  B64_LOOKUP[B64_CHARS.charCodeAt(i)] = i;
+}
+
 /**
- * Converts a data URL to a Blob without going through the network stack.
- * ~3–5× faster than fetch(dataUrl) because it avoids HTTP/XHR machinery.
+ * High-speed Base64 string to Uint8Array decoder using lookup table.
+ * Avoids allocating intermediate 1.5MB binary strings via atob().
+ * @param {string} b64 
+ * @returns {Uint8Array}
+ */
+export function fastBase64ToBytes(b64) {
+  const len = b64.length;
+  let validLen = len;
+  if (len > 0 && b64.charCodeAt(len - 1) === 61) validLen--;
+  if (len > 1 && b64.charCodeAt(len - 2) === 61) validLen--;
+  const byteLen = (validLen * 3) >> 2;
+  const bytes = new Uint8Array(byteLen);
+  let p = 0;
+  for (let i = 0; i < validLen; i += 4) {
+    const enc1 = B64_LOOKUP[b64.charCodeAt(i)];
+    const enc2 = B64_LOOKUP[b64.charCodeAt(i + 1)];
+    const enc3 = B64_LOOKUP[b64.charCodeAt(i + 2)];
+    const enc4 = B64_LOOKUP[b64.charCodeAt(i + 3)];
+    bytes[p++] = (enc1 << 2) | (enc2 >> 4);
+    if (p < byteLen) bytes[p++] = ((enc2 & 15) << 4) | (enc3 >> 2);
+    if (p < byteLen) bytes[p++] = ((enc3 & 3) << 6) | enc4;
+  }
+  return bytes;
+}
+
+/**
+ * Converts a data URL to a Blob using fast zero-intermediate-string decoding.
  * @param {string} dataUrl
  * @returns {Blob}
  */
-function dataUrlToBlob(dataUrl) {
+export function dataUrlToBlob(dataUrl) {
   const comma = dataUrl.indexOf(',');
+  if (comma === -1) return null;
   const mimeMatch = dataUrl.slice(0, comma).match(/:(.*?);/);
   const mime = mimeMatch ? mimeMatch[1] : 'image/jpeg';
   const base64 = dataUrl.slice(comma + 1);
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
+  const bytes = fastBase64ToBytes(base64);
   return new Blob([bytes], { type: mime });
 }
 
@@ -427,8 +455,9 @@ async function globalCaptureLoop() {
             unchangedEmptyFrames++;
             if (unchangedEmptyFrames >= 2) {
               // Frame was verified twice with no QR detected and is static.
-              // Eco-mode (2 FPS) until screen updates or user scrolls.
-              loopTimer = setTimeout(globalCaptureLoop, 500);
+              // Deep idle sleep: after 4 unchanged frames, poll only once every 1200ms.
+              const idleDelay = unchangedEmptyFrames >= 4 ? 1200 : 500;
+              loopTimer = setTimeout(globalCaptureLoop, idleDelay);
               return;
             }
           }
@@ -612,6 +641,78 @@ if (typeof browser !== 'undefined' && browser.tabs && browser.tabs.onRemoved) {
   });
 }
 
+// Remote image decode cache to avoid re-fetching the same image URLs
+const remoteImageCache = new Map();
+
+/**
+ * Fetches an external image without CORS restrictions and scans it at native resolution with zxing-wasm.
+ * @param {string} url
+ * @returns {Promise<Array<{ data: string, relLoc: { topLeftCorner: {x:number, y:number}, ... } }>>}
+ */
+export async function fetchRemoteImageAndDecode(url) {
+  if (!url || typeof fetch === 'undefined') return [];
+  if (remoteImageCache.has(url)) {
+    return remoteImageCache.get(url);
+  }
+
+  try {
+    const res = await fetch(url, { cache: 'force-cache' });
+    if (!res.ok) {
+      remoteImageCache.set(url, []);
+      return [];
+    }
+    const blob = await res.blob();
+    const bitmap = await createImageBitmap(blob);
+    try {
+      let w = bitmap.width;
+      let h = bitmap.height;
+      if (w < 20 || h < 20) {
+        remoteImageCache.set(url, []);
+        return [];
+      }
+
+      // Cap at 2048px to prevent gigantic textures
+      if (w > 2048 || h > 2048) {
+        const ratio = Math.min(2048 / w, 2048 / h);
+        w = Math.round(w * ratio);
+        h = Math.round(h * ratio);
+      }
+
+      const { canvas, ctx } = getCanvas();
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+      }
+      ctx.drawImage(bitmap, 0, 0, w, h);
+      const imgData = ctx.getImageData(0, 0, w, h);
+      const qrs = await decodeWithWorker(imgData.data.buffer, w, h, 4);
+
+      const normalized = (qrs || []).map((q) => ({
+        data: q.data,
+        relLoc: {
+          topLeftCorner:     { x: q.location.topLeftCorner.x / w,     y: q.location.topLeftCorner.y / h },
+          topRightCorner:    { x: q.location.topRightCorner.x / w,    y: q.location.topRightCorner.y / h },
+          bottomRightCorner: { x: q.location.bottomRightCorner.x / w, y: q.location.bottomRightCorner.y / h },
+          bottomLeftCorner:  { x: q.location.bottomLeftCorner.x / w,  y: q.location.bottomLeftCorner.y / h }
+        }
+      }));
+
+      // Cache up to 200 remote image results
+      if (remoteImageCache.size > 200) {
+        const firstKey = remoteImageCache.keys().next().value;
+        remoteImageCache.delete(firstKey);
+      }
+      remoteImageCache.set(url, normalized);
+      return normalized;
+    } finally {
+      bitmap.close();
+    }
+  } catch (err) {
+    remoteImageCache.set(url, []);
+    return [];
+  }
+}
+
 // Message Hub
 if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.onMessage) {
   browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -626,6 +727,12 @@ if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.onMessa
 
     case 'SCROLL_END': {
       isTabScrolling = false;
+      unchangedEmptyFrames = 0;
+      if (isGlobalActive) {
+        if (loopTimer) clearTimeout(loopTimer);
+        // Instant Snapshot-on-Rest: take sharp capture right after scroll stops
+        loopTimer = setTimeout(globalCaptureLoop, 25);
+      }
       sendResponse({ ok: true });
       return false;
     }
@@ -657,6 +764,13 @@ if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.onMessa
       }
       sendResponse({ ok: true });
       return false;
+    }
+
+    case 'SCAN_REMOTE_IMAGE': {
+      fetchRemoteImageAndDecode(message.url)
+        .then((qrs) => sendResponse({ qrs: qrs || [] }))
+        .catch(() => sendResponse({ qrs: [] }));
+      return true;
     }
 
     case 'SETTINGS_UPDATED': {

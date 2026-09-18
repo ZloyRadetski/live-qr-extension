@@ -76,3 +76,43 @@ test('computeFrameHash handles edge cases without throwing', async () => {
   assert.equal(computeFrameHash(''), 0, 'Empty string should return 0');
 });
 
+test('fastBase64ToBytes accurately decodes base64 strings with all padding variants', async () => {
+  const { fastBase64ToBytes } = await import('../src/background/background.js');
+
+  // Test various byte lengths (0, 1, 2 pad chars)
+  const samples = [
+    'Hello World!',
+    'A',
+    'AB',
+    'ABC',
+    'Testing fast base64 decoder lookup table with various symbols 1234567890 !@#$%^&*()_+',
+    String.fromCharCode(...Array.from({ length: 256 }, (_, i) => i))
+  ];
+
+  for (const str of samples) {
+    const expected = Buffer.from(str, 'binary');
+    const b64 = expected.toString('base64');
+    const decoded = fastBase64ToBytes(b64);
+    assert.deepEqual(Buffer.from(decoded), expected, `Mismatch decoding base64 for sample length ${str.length}`);
+  }
+});
+
+test('dataUrlToBlob creates a Blob with correct mime type and payload', async () => {
+  const { dataUrlToBlob } = await import('../src/background/background.js');
+
+  const text = 'QR_RADAR_DATA_URL_TEST';
+  const b64 = Buffer.from(text).toString('base64');
+  const dataUrl = `data:text/plain;base64,${b64}`;
+
+  const blob = dataUrlToBlob(dataUrl);
+  assert.ok(blob instanceof Blob, 'Should return an instance of Blob');
+  assert.equal(blob.type, 'text/plain');
+  assert.equal(blob.size, text.length);
+
+  const arrayBuffer = await blob.arrayBuffer();
+  assert.equal(Buffer.from(arrayBuffer).toString('utf-8'), text);
+
+  // Invalid URL without comma
+  assert.equal(dataUrlToBlob('invalid_data_url'), null);
+});
+

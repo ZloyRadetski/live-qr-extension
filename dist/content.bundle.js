@@ -2588,10 +2588,62 @@
       }
       return found;
     } catch (err) {
+      if (el.tagName === "IMG" && (el.currentSrc || el.src)) {
+        const src = el.currentSrc || el.src;
+        if (src.startsWith("http://") || src.startsWith("https://")) {
+          return scanRemoteImageViaBackground(el, src);
+        }
+      }
       console.warn(`[QR Radar] scanMediaElement failed for ${el.tagName}#${el.id || "?"} (${scanW}x${scanH}):`, err?.message || err);
       el._qrRadarTainted = true;
       offscreenCanvas = null;
       offscreenCtx = null;
+      return [];
+    }
+  }
+  async function scanRemoteImageViaBackground(el, src) {
+    if (typeof browser === "undefined" || !browser.runtime || !browser.runtime.sendMessage) {
+      return [];
+    }
+    if (el._qrRadarFetchingRemote) {
+      return [];
+    }
+    el._qrRadarFetchingRemote = true;
+    try {
+      const response = await browser.runtime.sendMessage({
+        type: "SCAN_REMOTE_IMAGE",
+        url: src
+      });
+      el._qrRadarFetchingRemote = false;
+      const remoteQrs = response?.qrs || [];
+      const rect = el.getBoundingClientRect();
+      el._qrRadarCachedSrc = src;
+      el._qrRadarCachedW = el.naturalWidth || rect.width;
+      el._qrRadarCachedH = el.naturalHeight || rect.height;
+      el._qrRadarCached = remoteQrs.map((q2) => ({
+        data: q2.data,
+        loc: {
+          topLeftCorner: { x: q2.relLoc.topLeftCorner.x * el._qrRadarCachedW, y: q2.relLoc.topLeftCorner.y * el._qrRadarCachedH },
+          topRightCorner: { x: q2.relLoc.topRightCorner.x * el._qrRadarCachedW, y: q2.relLoc.topRightCorner.y * el._qrRadarCachedH },
+          bottomRightCorner: { x: q2.relLoc.bottomRightCorner.x * el._qrRadarCachedW, y: q2.relLoc.bottomRightCorner.y * el._qrRadarCachedH },
+          bottomLeftCorner: { x: q2.relLoc.bottomLeftCorner.x * el._qrRadarCachedW, y: q2.relLoc.bottomLeftCorner.y * el._qrRadarCachedH }
+        }
+      }));
+      return remoteQrs.map((item) => ({
+        data: item.data,
+        location: {
+          topLeftCorner: { x: rect.left + item.relLoc.topLeftCorner.x * rect.width, y: rect.top + item.relLoc.topLeftCorner.y * rect.height },
+          topRightCorner: { x: rect.left + item.relLoc.topRightCorner.x * rect.width, y: rect.top + item.relLoc.topRightCorner.y * rect.height },
+          bottomRightCorner: { x: rect.left + item.relLoc.bottomRightCorner.x * rect.width, y: rect.top + item.relLoc.bottomRightCorner.y * rect.height },
+          bottomLeftCorner: { x: rect.left + item.relLoc.bottomLeftCorner.x * rect.width, y: rect.top + item.relLoc.bottomLeftCorner.y * rect.height }
+        },
+        rect,
+        element: el,
+        isDom: true
+      }));
+    } catch (e2) {
+      el._qrRadarFetchingRemote = false;
+      el._qrRadarTainted = true;
       return [];
     }
   }

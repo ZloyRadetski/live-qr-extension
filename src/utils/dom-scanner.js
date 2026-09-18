@@ -315,7 +315,16 @@ export async function scanMediaElement(el, maxDimension = 1920) {
 
     return found;
   } catch (err) {
-    // Cross-origin image (CORS) or tainted canvas - safely isolate
+    // If an <img> fails due to CORS tainted canvas, request background script
+    // to fetch and decode the image at native resolution with extension privileges
+    if (el.tagName === 'IMG' && (el.currentSrc || el.src)) {
+      const src = el.currentSrc || el.src;
+      if (src.startsWith('http://') || src.startsWith('https://')) {
+        return scanRemoteImageViaBackground(el, src);
+      }
+    }
+
+    // Canvas or non-http image - safely isolate
     console.warn(`[QR Radar] scanMediaElement failed for ${el.tagName}#${el.id || '?'} (${scanW}x${scanH}):`, err?.message || err);
     el._qrRadarTainted = true;
     // Reset canvas singleton so other elements are not poisoned
@@ -323,7 +332,64 @@ export async function scanMediaElement(el, maxDimension = 1920) {
     offscreenCtx = null;
     return [];
   }
+}
 
+/**
+ * Requests the background script to fetch a cross-origin image without CORS restrictions
+ * and scan it at native resolution with zxing-wasm.
+ * @param {HTMLImageElement} el
+ * @param {string} src
+ * @returns {Promise<Array<{ data: string, location: any, rect: DOMRect, element: HTMLElement, isDom: boolean }>>}
+ */
+async function scanRemoteImageViaBackground(el, src) {
+  if (typeof browser === 'undefined' || !browser.runtime || !browser.runtime.sendMessage) {
+    return [];
+  }
+  if (el._qrRadarFetchingRemote) {
+    return [];
+  }
+  el._qrRadarFetchingRemote = true;
+
+  try {
+    const response = await browser.runtime.sendMessage({
+      type: 'SCAN_REMOTE_IMAGE',
+      url: src
+    });
+
+    el._qrRadarFetchingRemote = false;
+    const remoteQrs = response?.qrs || [];
+    const rect = el.getBoundingClientRect();
+
+    el._qrRadarCachedSrc = src;
+    el._qrRadarCachedW = el.naturalWidth || rect.width;
+    el._qrRadarCachedH = el.naturalHeight || rect.height;
+    el._qrRadarCached = remoteQrs.map((q) => ({
+      data: q.data,
+      loc: {
+        topLeftCorner:     { x: q.relLoc.topLeftCorner.x * el._qrRadarCachedW,     y: q.relLoc.topLeftCorner.y * el._qrRadarCachedH },
+        topRightCorner:    { x: q.relLoc.topRightCorner.x * el._qrRadarCachedW,    y: q.relLoc.topRightCorner.y * el._qrRadarCachedH },
+        bottomRightCorner: { x: q.relLoc.bottomRightCorner.x * el._qrRadarCachedW, y: q.relLoc.bottomRightCorner.y * el._qrRadarCachedH },
+        bottomLeftCorner:  { x: q.relLoc.bottomLeftCorner.x * el._qrRadarCachedW,  y: q.relLoc.bottomLeftCorner.y * el._qrRadarCachedH }
+      }
+    }));
+
+    return remoteQrs.map((item) => ({
+      data: item.data,
+      location: {
+        topLeftCorner:     { x: rect.left + item.relLoc.topLeftCorner.x * rect.width,     y: rect.top + item.relLoc.topLeftCorner.y * rect.height },
+        topRightCorner:    { x: rect.left + item.relLoc.topRightCorner.x * rect.width,    y: rect.top + item.relLoc.topRightCorner.y * rect.height },
+        bottomRightCorner: { x: rect.left + item.relLoc.bottomRightCorner.x * rect.width, y: rect.top + item.relLoc.bottomRightCorner.y * rect.height },
+        bottomLeftCorner:  { x: rect.left + item.relLoc.bottomLeftCorner.x * rect.width,  y: rect.top + item.relLoc.bottomLeftCorner.y * rect.height }
+      },
+      rect,
+      element: el,
+      isDom: true
+    }));
+  } catch (e) {
+    el._qrRadarFetchingRemote = false;
+    el._qrRadarTainted = true;
+    return [];
+  }
 }
 
 /**

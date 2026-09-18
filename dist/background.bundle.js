@@ -2296,16 +2296,37 @@
     }
     return [];
   }
+  var B64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  var B64_LOOKUP = new Uint8Array(256);
+  for (let i2 = 0; i2 < B64_CHARS.length; i2++) {
+    B64_LOOKUP[B64_CHARS.charCodeAt(i2)] = i2;
+  }
+  function fastBase64ToBytes(b64) {
+    const len = b64.length;
+    let validLen = len;
+    if (len > 0 && b64.charCodeAt(len - 1) === 61) validLen--;
+    if (len > 1 && b64.charCodeAt(len - 2) === 61) validLen--;
+    const byteLen = validLen * 3 >> 2;
+    const bytes = new Uint8Array(byteLen);
+    let p2 = 0;
+    for (let i2 = 0; i2 < validLen; i2 += 4) {
+      const enc1 = B64_LOOKUP[b64.charCodeAt(i2)];
+      const enc2 = B64_LOOKUP[b64.charCodeAt(i2 + 1)];
+      const enc3 = B64_LOOKUP[b64.charCodeAt(i2 + 2)];
+      const enc4 = B64_LOOKUP[b64.charCodeAt(i2 + 3)];
+      bytes[p2++] = enc1 << 2 | enc2 >> 4;
+      if (p2 < byteLen) bytes[p2++] = (enc2 & 15) << 4 | enc3 >> 2;
+      if (p2 < byteLen) bytes[p2++] = (enc3 & 3) << 6 | enc4;
+    }
+    return bytes;
+  }
   function dataUrlToBlob(dataUrl) {
     const comma = dataUrl.indexOf(",");
+    if (comma === -1) return null;
     const mimeMatch = dataUrl.slice(0, comma).match(/:(.*?);/);
     const mime = mimeMatch ? mimeMatch[1] : "image/jpeg";
     const base64 = dataUrl.slice(comma + 1);
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i2 = 0; i2 < binary.length; i2++) {
-      bytes[i2] = binary.charCodeAt(i2);
-    }
+    const bytes = fastBase64ToBytes(base64);
     return new Blob([bytes], { type: mime });
   }
   var tabVideoRects = /* @__PURE__ */ new Map();
@@ -2485,7 +2506,8 @@
             } else {
               unchangedEmptyFrames++;
               if (unchangedEmptyFrames >= 2) {
-                loopTimer = setTimeout(globalCaptureLoop, 500);
+                const idleDelay = unchangedEmptyFrames >= 4 ? 1200 : 500;
+                loopTimer = setTimeout(globalCaptureLoop, idleDelay);
                 return;
               }
             }
@@ -2634,6 +2656,63 @@
       }
     });
   }
+  var remoteImageCache = /* @__PURE__ */ new Map();
+  async function fetchRemoteImageAndDecode(url) {
+    if (!url || typeof fetch === "undefined") return [];
+    if (remoteImageCache.has(url)) {
+      return remoteImageCache.get(url);
+    }
+    try {
+      const res = await fetch(url, { cache: "force-cache" });
+      if (!res.ok) {
+        remoteImageCache.set(url, []);
+        return [];
+      }
+      const blob = await res.blob();
+      const bitmap = await createImageBitmap(blob);
+      try {
+        let w3 = bitmap.width;
+        let h2 = bitmap.height;
+        if (w3 < 20 || h2 < 20) {
+          remoteImageCache.set(url, []);
+          return [];
+        }
+        if (w3 > 2048 || h2 > 2048) {
+          const ratio = Math.min(2048 / w3, 2048 / h2);
+          w3 = Math.round(w3 * ratio);
+          h2 = Math.round(h2 * ratio);
+        }
+        const { canvas: canvas2, ctx: ctx2 } = getCanvas();
+        if (canvas2.width !== w3 || canvas2.height !== h2) {
+          canvas2.width = w3;
+          canvas2.height = h2;
+        }
+        ctx2.drawImage(bitmap, 0, 0, w3, h2);
+        const imgData = ctx2.getImageData(0, 0, w3, h2);
+        const qrs = await decodeWithWorker(imgData.data.buffer, w3, h2, 4);
+        const normalized = (qrs || []).map((q2) => ({
+          data: q2.data,
+          relLoc: {
+            topLeftCorner: { x: q2.location.topLeftCorner.x / w3, y: q2.location.topLeftCorner.y / h2 },
+            topRightCorner: { x: q2.location.topRightCorner.x / w3, y: q2.location.topRightCorner.y / h2 },
+            bottomRightCorner: { x: q2.location.bottomRightCorner.x / w3, y: q2.location.bottomRightCorner.y / h2 },
+            bottomLeftCorner: { x: q2.location.bottomLeftCorner.x / w3, y: q2.location.bottomLeftCorner.y / h2 }
+          }
+        }));
+        if (remoteImageCache.size > 200) {
+          const firstKey = remoteImageCache.keys().next().value;
+          remoteImageCache.delete(firstKey);
+        }
+        remoteImageCache.set(url, normalized);
+        return normalized;
+      } finally {
+        bitmap.close();
+      }
+    } catch (err) {
+      remoteImageCache.set(url, []);
+      return [];
+    }
+  }
   if (typeof browser !== "undefined" && browser.runtime && browser.runtime.onMessage) {
     browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (!message || !message.type) return;
@@ -2645,6 +2724,11 @@
         }
         case "SCROLL_END": {
           isTabScrolling = false;
+          unchangedEmptyFrames = 0;
+          if (isGlobalActive) {
+            if (loopTimer) clearTimeout(loopTimer);
+            loopTimer = setTimeout(globalCaptureLoop, 25);
+          }
           sendResponse({ ok: true });
           return false;
         }
@@ -2675,6 +2759,10 @@
           }
           sendResponse({ ok: true });
           return false;
+        }
+        case "SCAN_REMOTE_IMAGE": {
+          fetchRemoteImageAndDecode(message.url).then((qrs) => sendResponse({ qrs: qrs || [] })).catch(() => sendResponse({ qrs: [] }));
+          return true;
         }
         case "SETTINGS_UPDATED": {
           if (message.settings) {
