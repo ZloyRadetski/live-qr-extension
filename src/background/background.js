@@ -125,7 +125,7 @@ async function decodeWithWorker(buffer, width, height, maxQRs = 4) {
   try {
     const results = await readBarcodes(
       { data: new Uint8ClampedArray(buffer), width, height },
-      { formats: ['QRCode'], maxNumberOfSymbols: maxQRs, tryHarder: false }
+      { formats: ['QRCode'], maxNumberOfSymbols: maxQRs, tryHarder: true }
     );
     if (Array.isArray(results) && results.length > 0) {
       return results.map((r) => ({
@@ -395,17 +395,17 @@ async function globalCaptureLoop() {
       }
 
       // Configure resolution and JPEG quality according to user settings.
-      // maxW values are generous because jsQR now runs in a Worker (0 ms main-thread cost),
-      // and high-density QR codes (version 35+, 157+ modules) need ~2px/module minimum.
-      const resolution = settings.scanResolution || '720';
-      let maxW = 960;
-      let quality = 75;
+      // With Wasm running in Worker (~10 ms), full 1080p native resolution ensures
+      // small QR codes (e.g. 40x40px on high-DPI or large screens) are not destroyed by downsampling.
+      const resolution = settings.scanResolution || '1080';
+      let maxW = 1920;
+      let quality = 78;
       if (resolution === '720') {
-        maxW = 720;  // was 540 — increased to handle dense QR codes at typical screen sizes
-        quality = 72;
+        maxW = 1280;  // provides at least 1280px width so small QR codes survive downsampling
+        quality = 75;
       } else if (resolution === '1440') {
-        maxW = 1280;
-        quality = 82;
+        maxW = 2560;
+        quality = 85;
       }
 
       const dataUrl = await browser.tabs.captureVisibleTab(tab.windowId, {

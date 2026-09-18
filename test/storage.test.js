@@ -24,7 +24,7 @@ test('DEFAULT_SETTINGS contains all customizable fields with correct default val
   assert.equal(DEFAULT_SETTINGS.soundEnabled, false);
   assert.equal(DEFAULT_SETTINGS.autoCopy, false);
   assert.equal(DEFAULT_SETTINGS.pauseOnScroll, true);
-  assert.equal(DEFAULT_SETTINGS.scanResolution, '720');
+  assert.equal(DEFAULT_SETTINGS.scanResolution, '1080');
   assert.equal(DEFAULT_SETTINGS.scanDomImages, true);
   assert.equal(DEFAULT_SETTINGS.scanRate, 2);
   assert.ok(Array.isArray(DEFAULT_SETTINGS.blacklist));

@@ -2019,7 +2019,7 @@
         {
           formats: ["QRCode"],
           maxNumberOfSymbols: maxQRs,
-          tryHarder: false
+          tryHarder: true
         }
       );
       if (Array.isArray(results) && results.length > 0) {

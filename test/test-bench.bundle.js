@@ -1359,15 +1359,15 @@
          */
         PriorityQueue: {
           make: function(opts) {
-            var T2 = dijkstra.PriorityQueue, t = {}, key;
+            var T3 = dijkstra.PriorityQueue, t = {}, key;
             opts = opts || {};
-            for (key in T2) {
-              if (T2.hasOwnProperty(key)) {
-                t[key] = T2[key];
+            for (key in T3) {
+              if (T3.hasOwnProperty(key)) {
+                t[key] = T3[key];
               }
             }
             t.queue = [];
-            t.sorter = opts.sorter || T2.default_sorter;
+            t.sorter = opts.sorter || T3.default_sorter;
             return t;
           },
           default_sorter: function(a2, b2) {

@@ -201,8 +201,8 @@
     // Auto copy content on detection
     pauseOnScroll: true,
     // Pause capture during scroll to save CPU
-    scanResolution: "720",
-    // '720' | '1080' | '1440' capture detail
+    scanResolution: "1080",
+    // '720' | '1080' | '1440' capture detail (default 1080p for crisp small QR detection)
     scanDomImages: true,
     // Directly scan visible in-page <img> and <canvas>
     blacklist: []
@@ -987,7 +987,7 @@
     var p2 = console.error.bind(console), m2, h2 = false, g2, _2, v2 = false;
     function y2() {
       var e3 = Fn.buffer;
-      C2 = new Int8Array(e3), x2 = new Int16Array(e3), i2.HEAPU8 = O2 = new Uint8Array(e3), E2 = new Uint16Array(e3), S2 = new Int32Array(e3), D2 = new Uint32Array(e3), w3 = new Float32Array(e3), T2 = new Float64Array(e3);
+      C2 = new Int8Array(e3), x2 = new Int16Array(e3), i2.HEAPU8 = O2 = new Uint8Array(e3), E2 = new Uint16Array(e3), S2 = new Int32Array(e3), D2 = new Uint32Array(e3), w3 = new Float32Array(e3), T3 = new Float64Array(e3);
     }
     function ee() {
       if (i2.preRun) for (typeof i2.preRun == "function" && (i2.preRun = [i2.preRun]); i2.preRun.length; ) me(i2.preRun.shift());
@@ -1057,7 +1057,7 @@
         });
       }) : (b2 != null || (b2 = ie()), t3(await ce(m2, b2, n3)));
     }
-    var x2, S2, C2, w3, T2, E2, D2, O2, k3 = (e3) => {
+    var x2, S2, C2, w3, T3, E2, D2, O2, k3 = (e3) => {
       for (; e3.length > 0; ) e3.shift()(i2);
     }, de = [], fe = (e3) => de.push(e3), pe = [], me = (e3) => pe.push(e3), A2 = (e3) => On(e3), j2 = () => kn(), M2 = [], he = 0, ge = (e3) => {
       var t3 = new ve(e3);
@@ -1615,7 +1615,7 @@
           };
         case 8:
           return function(e4) {
-            return this.fromWireType(T2[e4 >> 3]);
+            return this.fromWireType(T3[e4 >> 3]);
           };
         default:
           throw TypeError(`invalid float width (${t3}): ${e3}`);
@@ -2336,11 +2336,29 @@
       g2 = e3, _2 = t3;
     }), t2;
   }
+  function T2(e2) {
+    return q(w2, e2);
+  }
   async function k2(e2, t2) {
     return X(w2, e2, t2);
   }
 
   // src/utils/dom-scanner.js
+  var isWasmConfigured = false;
+  function ensureWasmConfigured() {
+    if (isWasmConfigured) return;
+    try {
+      const wasmUrl = typeof browser !== "undefined" && browser.runtime && browser.runtime.getURL ? browser.runtime.getURL("dist/zxing_reader.wasm") : "dist/zxing_reader.wasm";
+      T2({
+        overrides: {
+          locateFile: (path) => path.endsWith(".wasm") ? wasmUrl : path
+        }
+      });
+      isWasmConfigured = true;
+    } catch (err) {
+      console.warn("[QR Radar] DOM Scanner Wasm config error:", err);
+    }
+  }
   var offscreenCanvas = null;
   var offscreenCtx = null;
   function getOffscreenCanvas(width, height) {
@@ -2381,7 +2399,7 @@
     }
     return true;
   }
-  async function scanMediaElement(el, maxDimension = 1200) {
+  async function scanMediaElement(el, maxDimension = 1920) {
     if (!el) return [];
     let width = 0;
     let height = 0;
@@ -2511,9 +2529,10 @@
       }
       const found = [];
       try {
+        ensureWasmConfigured();
         const results = await k2(
           { data: imgData.data, width: scanW, height: scanH },
-          { formats: ["QRCode"], maxNumberOfSymbols: 4, tryHarder: false }
+          { formats: ["QRCode"], maxNumberOfSymbols: 4, tryHarder: true }
         );
         if (Array.isArray(results) && results.length > 0) {
           const rect = el.getBoundingClientRect();

@@ -2001,8 +2001,8 @@
     // Auto copy content on detection
     pauseOnScroll: true,
     // Pause capture during scroll to save CPU
-    scanResolution: "720",
-    // '720' | '1080' | '1440' capture detail
+    scanResolution: "1080",
+    // '720' | '1080' | '1440' capture detail (default 1080p for crisp small QR detection)
     scanDomImages: true,
     // Directly scan visible in-page <img> and <canvas>
     blacklist: []
@@ -2279,7 +2279,7 @@
     try {
       const results = await k2(
         { data: new Uint8ClampedArray(buffer), width, height },
-        { formats: ["QRCode"], maxNumberOfSymbols: maxQRs, tryHarder: false }
+        { formats: ["QRCode"], maxNumberOfSymbols: maxQRs, tryHarder: true }
       );
       if (Array.isArray(results) && results.length > 0) {
         return results.map((r2) => ({
@@ -2460,15 +2460,15 @@
           setTimeout(globalCaptureLoop, 500);
           return;
         }
-        const resolution = settings.scanResolution || "720";
-        let maxW = 960;
-        let quality = 75;
+        const resolution = settings.scanResolution || "1080";
+        let maxW = 1920;
+        let quality = 78;
         if (resolution === "720") {
-          maxW = 720;
-          quality = 72;
-        } else if (resolution === "1440") {
           maxW = 1280;
-          quality = 82;
+          quality = 75;
+        } else if (resolution === "1440") {
+          maxW = 2560;
+          quality = 85;
         }
         const dataUrl = await browser.tabs.captureVisibleTab(tab.windowId, {
           format: "jpeg",

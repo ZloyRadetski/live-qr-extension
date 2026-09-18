@@ -4,7 +4,26 @@
  * at full native resolution, bypassing screen downsampling and JPEG compression.
  */
 
-import { readBarcodes } from 'zxing-wasm/reader';
+import { readBarcodes, prepareZXingModule } from 'zxing-wasm/reader';
+
+let isWasmConfigured = false;
+
+function ensureWasmConfigured() {
+  if (isWasmConfigured) return;
+  try {
+    const wasmUrl = typeof browser !== 'undefined' && browser.runtime && browser.runtime.getURL
+      ? browser.runtime.getURL('dist/zxing_reader.wasm')
+      : 'dist/zxing_reader.wasm';
+    prepareZXingModule({
+      overrides: {
+        locateFile: (path) => (path.endsWith('.wasm') ? wasmUrl : path)
+      }
+    });
+    isWasmConfigured = true;
+  } catch (err) {
+    console.warn('[QR Radar] DOM Scanner Wasm config error:', err);
+  }
+}
 
 let offscreenCanvas = null;
 let offscreenCtx = null;
@@ -75,10 +94,10 @@ export function isElementInViewport(el, margin = 50) {
 /**
  * Scans an individual <img> or <canvas> element for all QR codes at its full native resolution.
  * @param {HTMLImageElement | HTMLCanvasElement} el
- * @param {number} [maxDimension=1200]
+ * @param {number} [maxDimension=1920]
  * @returns {Array<{ data: string, location: any, rect: DOMRect, element: HTMLElement }>}
  */
-export async function scanMediaElement(el, maxDimension = 1200) {
+export async function scanMediaElement(el, maxDimension = 1920) {
   if (!el) return [];
 
   let width = 0;
@@ -231,9 +250,10 @@ export async function scanMediaElement(el, maxDimension = 1200) {
 
     const found = [];
     try {
+      ensureWasmConfigured();
       const results = await readBarcodes(
         { data: imgData.data, width: scanW, height: scanH },
-        { formats: ['QRCode'], maxNumberOfSymbols: 4, tryHarder: false }
+        { formats: ['QRCode'], maxNumberOfSymbols: 4, tryHarder: true }
       );
 
       if (Array.isArray(results) && results.length > 0) {

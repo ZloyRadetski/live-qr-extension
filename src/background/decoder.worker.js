@@ -64,7 +64,7 @@ self.onmessage = async ({ data }) => {
       {
         formats: ['QRCode'],
         maxNumberOfSymbols: maxQRs,
-        tryHarder: false
+        tryHarder: true
       }
     );
 

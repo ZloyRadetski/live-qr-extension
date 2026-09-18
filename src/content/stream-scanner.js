@@ -4,7 +4,25 @@
  * and feeds image data to jsQR.
  */
 
-import { readBarcodes } from 'zxing-wasm/reader';
+import { readBarcodes, prepareZXingModule } from 'zxing-wasm/reader';
+
+let isStreamWasmConfigured = false;
+function ensureStreamWasmConfigured() {
+  if (isStreamWasmConfigured) return;
+  try {
+    const wasmUrl = typeof browser !== 'undefined' && browser.runtime && browser.runtime.getURL
+      ? browser.runtime.getURL('dist/zxing_reader.wasm')
+      : 'dist/zxing_reader.wasm';
+    prepareZXingModule({
+      overrides: {
+        locateFile: (path) => (path.endsWith('.wasm') ? wasmUrl : path)
+      }
+    });
+    isStreamWasmConfigured = true;
+  } catch (err) {
+    console.warn('[QR Radar] Stream Scanner Wasm config error:', err);
+  }
+}
 
 export class StreamScanner {
   /**
@@ -142,9 +160,10 @@ export class StreamScanner {
     // Decode with zxing-wasm
     let qrResult = null;
     try {
+      ensureStreamWasmConfigured();
       const results = await readBarcodes(
         { data: imageData.data, width: scanW, height: scanH },
-        { formats: ['QRCode'], maxNumberOfSymbols: 1 }
+        { formats: ['QRCode'], maxNumberOfSymbols: 1, tryHarder: true }
       );
       if (results && results.length > 0 && results[0].text && results[0].position) {
         qrResult = {

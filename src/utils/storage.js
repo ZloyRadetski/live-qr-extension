@@ -18,7 +18,7 @@ export const DEFAULT_SETTINGS = {
   soundEnabled: false,       // Audio chime on detection
   autoCopy: false,           // Auto copy content on detection
   pauseOnScroll: true,       // Pause capture during scroll to save CPU
-  scanResolution: '720',     // '720' | '1080' | '1440' capture detail
+  scanResolution: '1080',    // '720' | '1080' | '1440' capture detail (default 1080p for crisp small QR detection)
   scanDomImages: true,       // Directly scan visible in-page <img> and <canvas>
   blacklist: []              // List of excluded domains (e.g. ["bank.com"])
 };
