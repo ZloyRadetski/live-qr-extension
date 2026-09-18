@@ -10249,23 +10249,23 @@
   var DEFAULT_SETTINGS = {
     globalActive: false,
     // Whether scanner runs globally across all tabs
-    scanRate: 12,
-    // FPS: 1 to 120 (Slider, default 12)
-    themeColor: "cyan",
+    scanRate: 2,
+    // FPS: 1 to 120 (Slider, default 2 FPS Eco)
+    themeColor: "gold",
     // 'cyan' | 'emerald' | 'violet' | 'gold' | 'pink'
     cardDisplayMode: "hover",
     // 'hover' (expand on hover) | 'always' (always open) | 'compact' (mini pill only)
-    glowAnimation: true,
-    // Pulsing neon glow
+    glowAnimation: false,
+    // Inner QR background tint pulse
     cornerBrackets: true,
     // Corner targeting brackets
-    soundEnabled: true,
+    soundEnabled: false,
     // Audio chime on detection
     autoCopy: false,
     // Auto copy content on detection
     pauseOnScroll: true,
     // Pause capture during scroll to save CPU
-    scanResolution: "1080",
+    scanResolution: "720",
     // '720' | '1080' | '1440' capture detail
     scanDomImages: true,
     // Directly scan visible in-page <img> and <canvas>
@@ -10936,11 +10936,11 @@
   var QROverlayManager = class {
     constructor(options = {}) {
       this.options = {
-        soundEnabled: true,
+        soundEnabled: false,
         autoCopy: false,
-        themeColor: "cyan",
+        themeColor: "gold",
         cardDisplayMode: "hover",
-        glowAnimation: true,
+        glowAnimation: false,
         cornerBrackets: true,
         onStopRequested: () => {
         },
@@ -10961,7 +10961,7 @@
     applySettingsClasses() {
       if (!this.root) return;
       this.root.className = [
-        `theme-${this.options.themeColor || "cyan"}`,
+        `theme-${this.options.themeColor || "gold"}`,
         `mode-${this.options.cardDisplayMode || "hover"}`,
         this.options.glowAnimation === false ? "no-glow" : "",
         this.options.cornerBrackets === false ? "no-brackets" : ""
@@ -11433,7 +11433,7 @@
       cardDisplayMode: settings.cardDisplayMode,
       glowAnimation: settings.glowAnimation,
       cornerBrackets: settings.cornerBrackets,
-      scanRate: settings.scanRate || 12,
+      scanRate: settings.scanRate || 2,
       onStopRequested: () => {
         try {
           browser.runtime.sendMessage({ type: "STOP_SCAN" }).catch(() => {
@@ -11449,7 +11449,7 @@
     if (settings.scanDomImages !== false) {
       setupDomObserver();
       triggerDomScan();
-      updateDomScanRate(settings.scanRate || 12);
+      updateDomScanRate(settings.scanRate || 2);
     }
     return overlay;
   }

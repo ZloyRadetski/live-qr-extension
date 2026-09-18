@@ -7,23 +7,23 @@
   var DEFAULT_SETTINGS = {
     globalActive: false,
     // Whether scanner runs globally across all tabs
-    scanRate: 12,
-    // FPS: 1 to 120 (Slider, default 12)
-    themeColor: "cyan",
+    scanRate: 2,
+    // FPS: 1 to 120 (Slider, default 2 FPS Eco)
+    themeColor: "gold",
     // 'cyan' | 'emerald' | 'violet' | 'gold' | 'pink'
     cardDisplayMode: "hover",
     // 'hover' (expand on hover) | 'always' (always open) | 'compact' (mini pill only)
-    glowAnimation: true,
-    // Pulsing neon glow
+    glowAnimation: false,
+    // Inner QR background tint pulse
     cornerBrackets: true,
     // Corner targeting brackets
-    soundEnabled: true,
+    soundEnabled: false,
     // Audio chime on detection
     autoCopy: false,
     // Auto copy content on detection
     pauseOnScroll: true,
     // Pause capture during scroll to save CPU
-    scanResolution: "1080",
+    scanResolution: "720",
     // '720' | '1080' | '1440' capture detail
     scanDomImages: true,
     // Directly scan visible in-page <img> and <canvas>
@@ -331,7 +331,7 @@
   }
   async function loadPreferences() {
     const settings = await getSettings();
-    const currentTheme = settings.themeColor || "cyan";
+    const currentTheme = settings.themeColor || "gold";
     themeSwatches.querySelectorAll(".color-swatch").forEach((swatch) => {
       swatch.classList.toggle("active", swatch.dataset.theme === currentTheme);
     });
@@ -339,14 +339,14 @@
     cardModeSelector.querySelectorAll(".segment-btn").forEach((btn) => {
       btn.classList.toggle("active", btn.dataset.mode === currentMode);
     });
-    settingGlow.checked = settings.glowAnimation ?? true;
+    settingGlow.checked = settings.glowAnimation ?? false;
     settingBrackets.checked = settings.cornerBrackets ?? true;
-    settingSound.checked = settings.soundEnabled ?? true;
+    settingSound.checked = settings.soundEnabled ?? false;
     settingAutoCopy.checked = settings.autoCopy ?? false;
     settingPauseScroll.checked = settings.pauseOnScroll ?? true;
-    const currentFps = Math.max(1, Math.min(120, settings.scanRate || 12));
+    const currentFps = Math.max(1, Math.min(120, settings.scanRate ?? 2));
     updateFpsUI(currentFps);
-    const currentRes = settings.scanResolution || "1080";
+    const currentRes = settings.scanResolution || "720";
     resolutionSelector.querySelectorAll(".segment-btn").forEach((btn) => {
       btn.classList.toggle("active", btn.dataset.res === currentRes);
     });

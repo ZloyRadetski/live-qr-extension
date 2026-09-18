@@ -12776,11 +12776,11 @@
   var QROverlayManager = class {
     constructor(options = {}) {
       this.options = {
-        soundEnabled: true,
+        soundEnabled: false,
         autoCopy: false,
-        themeColor: "cyan",
+        themeColor: "gold",
         cardDisplayMode: "hover",
-        glowAnimation: true,
+        glowAnimation: false,
         cornerBrackets: true,
         onStopRequested: () => {
         },
@@ -12801,7 +12801,7 @@
     applySettingsClasses() {
       if (!this.root) return;
       this.root.className = [
-        `theme-${this.options.themeColor || "cyan"}`,
+        `theme-${this.options.themeColor || "gold"}`,
         `mode-${this.options.cardDisplayMode || "hover"}`,
         this.options.glowAnimation === false ? "no-glow" : "",
         this.options.cornerBrackets === false ? "no-brackets" : ""

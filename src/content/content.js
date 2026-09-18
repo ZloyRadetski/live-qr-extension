@@ -176,7 +176,7 @@ async function initOverlay() {
     cardDisplayMode: settings.cardDisplayMode,
     glowAnimation: settings.glowAnimation,
     cornerBrackets: settings.cornerBrackets,
-    scanRate: settings.scanRate || 12,
+    scanRate: settings.scanRate || 2,
     onStopRequested: () => {
       // Notify background to stop capture loop
       try {
@@ -196,7 +196,7 @@ async function initOverlay() {
   if (settings.scanDomImages !== false) {
     setupDomObserver();
     triggerDomScan();
-    updateDomScanRate(settings.scanRate || 12);
+    updateDomScanRate(settings.scanRate || 2);
   }
 
   return overlay;

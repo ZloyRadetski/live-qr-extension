@@ -16,18 +16,17 @@ test('isDomainBlacklisted correctly matches exact and subdomain entries', () => 
   assert.equal(isDomainBlacklisted('invalid-url', blacklist), false);
 });
 
-test('DEFAULT_SETTINGS contains all customizable fields', () => {
-  assert.ok(DEFAULT_SETTINGS.themeColor);
-  assert.ok(DEFAULT_SETTINGS.cardDisplayMode);
-  assert.equal(typeof DEFAULT_SETTINGS.glowAnimation, 'boolean');
-  assert.equal(typeof DEFAULT_SETTINGS.cornerBrackets, 'boolean');
-  assert.equal(typeof DEFAULT_SETTINGS.soundEnabled, 'boolean');
-  assert.equal(typeof DEFAULT_SETTINGS.autoCopy, 'boolean');
-  assert.equal(typeof DEFAULT_SETTINGS.pauseOnScroll, 'boolean');
-  assert.equal(typeof DEFAULT_SETTINGS.scanResolution, 'string');
-  assert.equal(typeof DEFAULT_SETTINGS.scanDomImages, 'boolean');
-  assert.equal(typeof DEFAULT_SETTINGS.scanRate, 'number');
-  assert.ok(DEFAULT_SETTINGS.scanRate >= 1 && DEFAULT_SETTINGS.scanRate <= 120);
+test('DEFAULT_SETTINGS contains all customizable fields with correct default values', () => {
+  assert.equal(DEFAULT_SETTINGS.themeColor, 'gold');
+  assert.equal(DEFAULT_SETTINGS.cardDisplayMode, 'hover');
+  assert.equal(DEFAULT_SETTINGS.glowAnimation, false);
+  assert.equal(DEFAULT_SETTINGS.cornerBrackets, true);
+  assert.equal(DEFAULT_SETTINGS.soundEnabled, false);
+  assert.equal(DEFAULT_SETTINGS.autoCopy, false);
+  assert.equal(DEFAULT_SETTINGS.pauseOnScroll, true);
+  assert.equal(DEFAULT_SETTINGS.scanResolution, '720');
+  assert.equal(DEFAULT_SETTINGS.scanDomImages, true);
+  assert.equal(DEFAULT_SETTINGS.scanRate, 2);
   assert.ok(Array.isArray(DEFAULT_SETTINGS.blacklist));
 });
 

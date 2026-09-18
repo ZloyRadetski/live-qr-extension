@@ -161,7 +161,7 @@ async function loadPreferences() {
   const settings = await getSettings();
 
   // 1. Theme Swatches
-  const currentTheme = settings.themeColor || 'cyan';
+  const currentTheme = settings.themeColor || 'gold';
   themeSwatches.querySelectorAll('.color-swatch').forEach((swatch) => {
     swatch.classList.toggle('active', swatch.dataset.theme === currentTheme);
   });
@@ -173,18 +173,18 @@ async function loadPreferences() {
   });
 
   // 3. Toggles
-  settingGlow.checked = settings.glowAnimation ?? true;
+  settingGlow.checked = settings.glowAnimation ?? false;
   settingBrackets.checked = settings.cornerBrackets ?? true;
-  settingSound.checked = settings.soundEnabled ?? true;
+  settingSound.checked = settings.soundEnabled ?? false;
   settingAutoCopy.checked = settings.autoCopy ?? false;
   settingPauseScroll.checked = settings.pauseOnScroll ?? true;
 
   // 4. Scan Rate Slider (1 to 120 FPS)
-  const currentFps = Math.max(1, Math.min(120, settings.scanRate || 12));
+  const currentFps = Math.max(1, Math.min(120, settings.scanRate ?? 2));
   updateFpsUI(currentFps);
 
   // 5. Scan Resolution Profile
-  const currentRes = settings.scanResolution || '1080';
+  const currentRes = settings.scanResolution || '720';
   resolutionSelector.querySelectorAll('.segment-btn').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.res === currentRes);
   });

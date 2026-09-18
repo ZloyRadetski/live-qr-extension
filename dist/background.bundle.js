@@ -10059,23 +10059,23 @@
   var DEFAULT_SETTINGS = {
     globalActive: false,
     // Whether scanner runs globally across all tabs
-    scanRate: 12,
-    // FPS: 1 to 120 (Slider, default 12)
-    themeColor: "cyan",
+    scanRate: 2,
+    // FPS: 1 to 120 (Slider, default 2 FPS Eco)
+    themeColor: "gold",
     // 'cyan' | 'emerald' | 'violet' | 'gold' | 'pink'
     cardDisplayMode: "hover",
     // 'hover' (expand on hover) | 'always' (always open) | 'compact' (mini pill only)
-    glowAnimation: true,
-    // Pulsing neon glow
+    glowAnimation: false,
+    // Inner QR background tint pulse
     cornerBrackets: true,
     // Corner targeting brackets
-    soundEnabled: true,
+    soundEnabled: false,
     // Audio chime on detection
     autoCopy: false,
     // Auto copy content on detection
     pauseOnScroll: true,
     // Pause capture during scroll to save CPU
-    scanResolution: "1080",
+    scanResolution: "720",
     // '720' | '1080' | '1440' capture detail
     scanDomImages: true,
     // Directly scan visible in-page <img> and <canvas>
@@ -10491,7 +10491,7 @@
           setTimeout(globalCaptureLoop, 500);
           return;
         }
-        const resolution = settings.scanResolution || "1080";
+        const resolution = settings.scanResolution || "720";
         let maxW = 720;
         let quality = 75;
         if (resolution === "720") {
@@ -10547,7 +10547,7 @@
     } catch (err) {
     }
     if (isGlobalActive) {
-      const userFps = Math.max(1, Math.min(120, Number(settings.scanRate) || 12));
+      const userFps = Math.max(1, Math.min(120, Number(settings.scanRate) || 2));
       const effectiveFps = hasActiveQR ? userFps : Math.max(1, Math.min(userFps, Math.max(4, Math.round(userFps * 0.75))));
       const targetInterval = Math.round(1e3 / effectiveFps);
       const elapsed = performance.now() - loopStartTime;

@@ -293,7 +293,7 @@ async function globalCaptureLoop() {
       }
 
       // Configure resolution and JPEG quality according to user settings
-      const resolution = settings.scanResolution || '1080';
+      const resolution = settings.scanResolution || '720';
       let maxW = 720;
       let quality = 75; // 75 produces compact ~350KB payload, eliminating GC memory churn
       if (resolution === '720') {
@@ -355,7 +355,7 @@ async function globalCaptureLoop() {
 
   if (isGlobalActive) {
     // User-configured FPS from 1 to 120 (Slider setting):
-    const userFps = Math.max(1, Math.min(120, Number(settings.scanRate) || 12));
+    const userFps = Math.max(1, Math.min(120, Number(settings.scanRate) || 2));
 
     // When a QR code is on screen, run at full userFps for maximum tracking smoothness (up to 120 FPS).
     // When idle (no QR code on screen), scale with userFps (at least 4 FPS, or 75% of userFps for higher settings).

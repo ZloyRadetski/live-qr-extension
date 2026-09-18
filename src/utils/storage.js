@@ -10,15 +10,15 @@ const STORAGE_KEYS = {
 
 export const DEFAULT_SETTINGS = {
   globalActive: false,       // Whether scanner runs globally across all tabs
-  scanRate: 12,              // FPS: 1 to 120 (Slider, default 12)
-  themeColor: 'cyan',        // 'cyan' | 'emerald' | 'violet' | 'gold' | 'pink'
+  scanRate: 2,               // FPS: 1 to 120 (Slider, default 2 FPS Eco)
+  themeColor: 'gold',        // 'cyan' | 'emerald' | 'violet' | 'gold' | 'pink'
   cardDisplayMode: 'hover',  // 'hover' (expand on hover) | 'always' (always open) | 'compact' (mini pill only)
-  glowAnimation: true,       // Pulsing neon glow
+  glowAnimation: false,      // Inner QR background tint pulse
   cornerBrackets: true,      // Corner targeting brackets
-  soundEnabled: true,        // Audio chime on detection
+  soundEnabled: false,       // Audio chime on detection
   autoCopy: false,           // Auto copy content on detection
   pauseOnScroll: true,       // Pause capture during scroll to save CPU
-  scanResolution: '1080',    // '720' | '1080' | '1440' capture detail
+  scanResolution: '720',     // '720' | '1080' | '1440' capture detail
   scanDomImages: true,       // Directly scan visible in-page <img> and <canvas>
   blacklist: []              // List of excluded domains (e.g. ["bank.com"])
 };
