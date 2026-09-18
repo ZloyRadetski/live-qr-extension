@@ -12556,7 +12556,8 @@
       if (!this.anchorElement || !this.anchorElement.isConnected) {
         this.anchorElement = anchorEl || findAnchorElement(bounds.centerX, bounds.centerY);
       }
-      if (!this.anchorOffset || this.anchorElement !== prevAnchor) {
+      const isStaticImg = this.anchorElement && this.anchorElement.tagName === "IMG";
+      if (!this.anchorOffset || !isStaticImg || this.anchorElement !== prevAnchor) {
         this.anchorOffset = computeAnchorOffset(this.anchorElement, bounds);
       }
       this.isFixed = isElementFixed(this.anchorElement);
@@ -12573,22 +12574,9 @@
         width: bounds.width,
         height: bounds.height
       };
-      if (this.anchorElement && this.anchorElement.isConnected && this.anchorOffset) {
-        const pos = resolveAnchorPosition(this.anchorElement, this.anchorOffset);
-        if (pos) {
-          const targetX = this.isFixed ? pos.x : pos.docX;
-          const targetY = this.isFixed ? pos.y : pos.docY;
-          this.applyPosition(targetX, targetY, pos.width, pos.height, pos.isVisible, this.isFixed);
-        } else {
-          const targetX = this.isFixed ? bounds.minX : this.docBounds.docX;
-          const targetY = this.isFixed ? bounds.minY : this.docBounds.docY;
-          this.applyPosition(targetX, targetY, bounds.width, bounds.height, true, this.isFixed);
-        }
-      } else {
-        const targetX = this.isFixed ? bounds.minX : this.docBounds.docX;
-        const targetY = this.isFixed ? bounds.minY : this.docBounds.docY;
-        this.applyPosition(targetX, targetY, bounds.width, bounds.height, true, this.isFixed);
-      }
+      const targetX = this.isFixed ? bounds.minX : this.docBounds.docX;
+      const targetY = this.isFixed ? bounds.minY : this.docBounds.docY;
+      this.applyPosition(targetX, targetY, bounds.width, bounds.height, true, this.isFixed);
       if (text !== this.lastDetectedText) {
         const isInitial = this.lastDetectedText === null;
         this.lastDetectedText = text;
@@ -12648,12 +12636,16 @@
         return;
       }
       if (this.anchorElement) {
-        if (!this.anchorElement.isConnected || !isElementInViewport(this.anchorElement)) {
+        if (!this.anchorElement.isConnected) {
+          this.boxElement.classList.add("qr-hidden");
+          return;
+        }
+        if (this.anchorElement.hidden || this.anchorElement.style?.display === "none" || this.anchorElement.style?.visibility === "hidden" || this.anchorElement.style?.opacity === "0") {
           this.boxElement.classList.add("qr-hidden");
           return;
         }
       }
-      if (this.anchorElement && this.anchorElement.isConnected && this.anchorOffset) {
+      if (this.anchorElement && this.anchorElement.tagName === "IMG" && this.anchorElement.isConnected && this.anchorOffset) {
         const rect = this.anchorElement.getBoundingClientRect();
         const scrollX = typeof window !== "undefined" ? window.pageXOffset || window.scrollX || 0 : 0;
         const scrollY = typeof window !== "undefined" ? window.pageYOffset || window.scrollY || 0 : 0;
@@ -12875,16 +12867,19 @@
       }
       for (const [id, tracker] of this.trackers.entries()) {
         if (!matchedTrackerIds.has(id)) {
-          if (tracker.isDomLocked && tracker.anchorElement) {
-            if (source === "screen" && isElementInViewport(tracker.anchorElement)) {
+          if (source === "dom" && !tracker.isDomLocked) {
+            continue;
+          }
+          if (source === "screen" && tracker.isDomLocked) {
+            if (tracker.anchorElement && isElementInViewport(tracker.anchorElement)) {
               continue;
             }
           }
           tracker.missingFrames++;
-          if (tracker.missingFrames >= 1 && tracker.boxElement) {
+          if (tracker.missingFrames >= 2 && tracker.boxElement) {
             tracker.boxElement.classList.add("qr-hidden");
           }
-          if (tracker.missingFrames > tracker.maxMissingFrames) {
+          if (tracker.missingFrames > 5) {
             tracker.destroy();
             this.trackers.delete(id);
           }
@@ -12942,14 +12937,14 @@
      */
     onScreenQrNotFound() {
       for (const [id, tracker] of this.trackers.entries()) {
-        if (tracker.isDomLocked && tracker.anchorElement && isElementInViewport(tracker.anchorElement)) {
+        if (tracker.isDomLocked) {
           continue;
         }
         tracker.missingFrames++;
-        if (tracker.missingFrames >= 1 && tracker.boxElement) {
+        if (tracker.missingFrames >= 2 && tracker.boxElement) {
           tracker.boxElement.classList.add("qr-hidden");
         }
-        if (tracker.missingFrames > tracker.maxMissingFrames) {
+        if (tracker.missingFrames > 5) {
           tracker.destroy();
           this.trackers.delete(id);
         }

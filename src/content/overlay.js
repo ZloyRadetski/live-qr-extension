@@ -105,9 +105,10 @@ class QRBoxTracker {
       this.anchorElement = anchorEl || findAnchorElement(bounds.centerX, bounds.centerY);
     }
 
-    // Calculate anchorOffset ONLY when target anchor is first acquired or changed!
-    // Never re-calculate on every frame because stale screenshot timestamps during scroll will corrupt the offset.
-    if (!this.anchorOffset || this.anchorElement !== prevAnchor) {
+    // If anchor is a static image, the QR code inside the image file does not move within the image.
+    // For CANVAS, VIDEO, or dynamic elements, the QR code moves inside the element, so always update anchorOffset.
+    const isStaticImg = this.anchorElement && this.anchorElement.tagName === 'IMG';
+    if (!this.anchorOffset || !isStaticImg || this.anchorElement !== prevAnchor) {
       this.anchorOffset = computeAnchorOffset(this.anchorElement, bounds);
     }
 
@@ -130,24 +131,10 @@ class QRBoxTracker {
       height: bounds.height
     };
 
-    // Position: If fixed, use viewport coordinates (bounds.minX, bounds.minY).
-    // If document (normal page content), use document coordinates (docX, docY).
-    if (this.anchorElement && this.anchorElement.isConnected && this.anchorOffset) {
-      const pos = resolveAnchorPosition(this.anchorElement, this.anchorOffset);
-      if (pos) {
-        const targetX = this.isFixed ? pos.x : pos.docX;
-        const targetY = this.isFixed ? pos.y : pos.docY;
-        this.applyPosition(targetX, targetY, pos.width, pos.height, pos.isVisible, this.isFixed);
-      } else {
-        const targetX = this.isFixed ? bounds.minX : this.docBounds.docX;
-        const targetY = this.isFixed ? bounds.minY : this.docBounds.docY;
-        this.applyPosition(targetX, targetY, bounds.width, bounds.height, true, this.isFixed);
-      }
-    } else {
-      const targetX = this.isFixed ? bounds.minX : this.docBounds.docX;
-      const targetY = this.isFixed ? bounds.minY : this.docBounds.docY;
-      this.applyPosition(targetX, targetY, bounds.width, bounds.height, true, this.isFixed);
-    }
+    // Position: apply the freshly detected bounds directly
+    const targetX = this.isFixed ? bounds.minX : this.docBounds.docX;
+    const targetY = this.isFixed ? bounds.minY : this.docBounds.docY;
+    this.applyPosition(targetX, targetY, bounds.width, bounds.height, true, this.isFixed);
 
     // Content changed?
     if (text !== this.lastDetectedText) {
@@ -219,13 +206,23 @@ class QRBoxTracker {
     }
 
     if (this.anchorElement) {
-      if (!this.anchorElement.isConnected || !isElementInViewport(this.anchorElement)) {
+      if (!this.anchorElement.isConnected) {
+        this.boxElement.classList.add('qr-hidden');
+        return;
+      }
+      if (
+        this.anchorElement.hidden ||
+        this.anchorElement.style?.display === 'none' ||
+        this.anchorElement.style?.visibility === 'hidden' ||
+        this.anchorElement.style?.opacity === '0'
+      ) {
         this.boxElement.classList.add('qr-hidden');
         return;
       }
     }
 
-    if (this.anchorElement && this.anchorElement.isConnected && this.anchorOffset) {
+    // High-frequency sync for static image elements moving or resizing on the page
+    if (this.anchorElement && this.anchorElement.tagName === 'IMG' && this.anchorElement.isConnected && this.anchorOffset) {
       const rect = this.anchorElement.getBoundingClientRect();
       const scrollX = typeof window !== 'undefined' ? (window.pageXOffset || window.scrollX || 0) : 0;
       const scrollY = typeof window !== 'undefined' ? (window.pageYOffset || window.scrollY || 0) : 0;
@@ -492,20 +489,29 @@ export class QROverlayManager {
     // Clean up trackers not seen in this update
     for (const [id, tracker] of this.trackers.entries()) {
       if (!matchedTrackerIds.has(id)) {
-        // If tracker is DOM locked, check if its DOM element is still visible on page
-        if (tracker.isDomLocked && tracker.anchorElement) {
-          if (source === 'screen' && isElementInViewport(tracker.anchorElement)) {
-            // Background screen capture didn't see the tiny DOM image; keep it!
+        // SOURCE SEPARATION:
+        // 1. DOM scan ONLY manages DOM trackers (tracker.isDomLocked === true).
+        // It must never touch or hide screen-captured trackers!
+        if (source === 'dom' && !tracker.isDomLocked) {
+          continue;
+        }
+
+        // 2. Screen capture must not kill DOM-locked trackers that are visible in viewport!
+        if (source === 'screen' && tracker.isDomLocked) {
+          if (tracker.anchorElement && isElementInViewport(tracker.anchorElement)) {
             continue;
           }
         }
 
         tracker.missingFrames++;
-        if (tracker.missingFrames >= 1 && tracker.boxElement) {
+
+        // Hysteresis: hide when missing for 2 consecutive scans, destroy after 5
+        // Single frame dropped by jsQR will NEVER cause flickering!
+        if (tracker.missingFrames >= 2 && tracker.boxElement) {
           tracker.boxElement.classList.add('qr-hidden');
         }
 
-        if (tracker.missingFrames > tracker.maxMissingFrames) {
+        if (tracker.missingFrames > 5) {
           tracker.destroy();
           this.trackers.delete(id);
         }
@@ -573,16 +579,17 @@ export class QROverlayManager {
    */
   onScreenQrNotFound() {
     for (const [id, tracker] of this.trackers.entries()) {
-      if (tracker.isDomLocked && tracker.anchorElement && isElementInViewport(tracker.anchorElement)) {
+      // Screen capture not finding QRs must never kill DOM-locked trackers!
+      if (tracker.isDomLocked) {
         continue;
       }
 
       tracker.missingFrames++;
-      if (tracker.missingFrames >= 1 && tracker.boxElement) {
+      if (tracker.missingFrames >= 2 && tracker.boxElement) {
         tracker.boxElement.classList.add('qr-hidden');
       }
 
-      if (tracker.missingFrames > tracker.maxMissingFrames) {
+      if (tracker.missingFrames > 5) {
         tracker.destroy();
         this.trackers.delete(id);
       }
