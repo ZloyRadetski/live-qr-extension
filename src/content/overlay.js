@@ -243,12 +243,10 @@ class QRBoxTracker {
       `;
     }
 
-    const fps = this.options.scanRate || 12;
     this.hudCard.innerHTML = `
       <div class="qr-radar-hud-header">
         <span class="qr-radar-type-badge qr-badge-${parsed.type}">${parsed.type}</span>
         <span style="font-size: 11px; color: #8b949e;">${escapeHtml(parsed.title)}</span>
-        <span class="qr-radar-fps-pill" title="Scan Speed">${fps} FPS</span>
       </div>
       <div class="qr-radar-hud-body">
         ${escapeHtml(parsed.summary)}
