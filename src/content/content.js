@@ -107,11 +107,30 @@ if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.onMessa
   });
 }
 
-// 60/120 FPS Real-time scroll compensation
+// 60/120 FPS Real-time scroll compensation with background pause
+let scrollNotifyTimer = null;
+let isScrollingActive = false;
+
 window.addEventListener('scroll', () => {
   if (overlay) {
     overlay.onScroll();
   }
+
+  // Notify background service to pause heavy captures during scroll
+  if (!isScrollingActive) {
+    isScrollingActive = true;
+    try {
+      browser.runtime.sendMessage({ type: 'SCROLL_START' }).catch(() => {});
+    } catch {}
+  }
+
+  clearTimeout(scrollNotifyTimer);
+  scrollNotifyTimer = setTimeout(() => {
+    isScrollingActive = false;
+    try {
+      browser.runtime.sendMessage({ type: 'SCROLL_END' }).catch(() => {});
+    } catch {}
+  }, 140);
 }, { passive: true });
 
 // Resize listener

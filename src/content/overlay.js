@@ -145,7 +145,7 @@ export class QROverlayManager {
   }
 
   /**
-   * Applies position and card orientation.
+   * Applies position and card orientation using GPU compositor.
    */
   applyPosition(x, y, width, height, isVisible) {
     if (!this.boxElement) return;
@@ -156,10 +156,18 @@ export class QROverlayManager {
     }
 
     this.boxElement.style.visibility = 'visible';
-    this.boxElement.style.left = `${Math.round(x)}px`;
-    this.boxElement.style.top = `${Math.round(y)}px`;
-    if (width > 0) this.boxElement.style.width = `${Math.round(width)}px`;
-    if (height > 0) this.boxElement.style.height = `${Math.round(height)}px`;
+    // GPU-accelerated translate3d bypasses layout reflow and repaints
+    this.boxElement.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0)`;
+
+    // Only update dimensions if changed
+    if (width > 0 && this.lastWidth !== width) {
+      this.lastWidth = width;
+      this.boxElement.style.width = `${Math.round(width)}px`;
+    }
+    if (height > 0 && this.lastHeight !== height) {
+      this.lastHeight = height;
+      this.boxElement.style.height = `${Math.round(height)}px`;
+    }
 
     // Flip card if too close to bottom of screen
     const spaceBelow = window.innerHeight - (y + height);

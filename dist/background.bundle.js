@@ -10248,24 +10248,28 @@
   // src/background/background.js
   var isGlobalActive = false;
   var isLoopRunning = false;
+  var isTabScrolling = false;
+  var isWindowFocused = true;
+  var hasActiveQR = false;
   var canvas = null;
   var ctx = null;
+  var cachedImg = null;
   function getCanvas() {
     if (!canvas && typeof document !== "undefined") {
       canvas = document.createElement("canvas");
       ctx = canvas.getContext("2d", { willReadFrequently: true });
+      cachedImg = new Image();
     }
-    return { canvas, ctx };
+    return { canvas, ctx, cachedImg };
   }
   async function decodeDataUrl(dataUrl) {
-    const { canvas: canvas2, ctx: ctx2 } = getCanvas();
-    if (!canvas2 || !ctx2) return null;
+    const { canvas: canvas2, ctx: ctx2, cachedImg: cachedImg2 } = getCanvas();
+    if (!canvas2 || !ctx2 || !cachedImg2) return null;
     return new Promise((resolve) => {
-      const img = new Image();
-      img.onload = () => {
-        let w = img.width;
-        let h = img.height;
-        const maxW = 720;
+      cachedImg2.onload = () => {
+        let w = cachedImg2.width;
+        let h = cachedImg2.height;
+        const maxW = 540;
         if (w > maxW) {
           const ratio = maxW / w;
           w = Math.round(w * ratio);
@@ -10275,13 +10279,13 @@
           canvas2.width = w;
           canvas2.height = h;
         }
-        ctx2.drawImage(img, 0, 0, w, h);
+        ctx2.drawImage(cachedImg2, 0, 0, w, h);
         const imgData = ctx2.getImageData(0, 0, w, h);
         const qr = (0, import_jsqr.default)(imgData.data, w, h, { inversionAttempts: "dontInvert" });
         resolve({ qr, scanWidth: w, scanHeight: h });
       };
-      img.onerror = () => resolve(null);
-      img.src = dataUrl;
+      cachedImg2.onerror = () => resolve(null);
+      cachedImg2.src = dataUrl;
     });
   }
   async function ensureInjected(tabId) {
@@ -10300,7 +10304,7 @@
         files: ["dist/content.bundle.js"]
       });
       return true;
-    } catch (err) {
+    } catch {
       return false;
     }
   }
@@ -10311,16 +10315,21 @@
     }
     isLoopRunning = true;
     const loopStartTime = performance.now();
+    if (!isWindowFocused || isTabScrolling) {
+      setTimeout(globalCaptureLoop, 120);
+      return;
+    }
     try {
       const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
       if (tab && tab.id && tab.windowId && !tab.url?.startsWith("about:")) {
         const dataUrl = await browser.tabs.captureVisibleTab(tab.windowId, {
           format: "jpeg",
-          quality: 65
+          quality: 60
         });
-        if (dataUrl && isGlobalActive) {
+        if (dataUrl && isGlobalActive && !isTabScrolling) {
           const decoded = await decodeDataUrl(dataUrl);
           if (decoded && decoded.qr) {
+            hasActiveQR = true;
             const parsed = classifyContent(decoded.qr.data);
             addScanHistory({
               text: decoded.qr.data,
@@ -10336,6 +10345,7 @@
             }).catch(() => {
             });
           } else {
+            hasActiveQR = false;
             browser.tabs.sendMessage(tab.id, {
               type: "QR_NOT_FOUND"
             }).catch(() => {
@@ -10347,8 +10357,9 @@
     }
     if (isGlobalActive) {
       const settings = await getSettings();
-      const fps = settings.scanRate || 15;
-      const targetInterval = Math.round(1e3 / fps);
+      const baseFps = settings.scanRate || 15;
+      const effectiveFps = hasActiveQR ? Math.min(4, baseFps) : baseFps;
+      const targetInterval = Math.round(1e3 / effectiveFps);
       const elapsed = performance.now() - loopStartTime;
       const nextDelay = Math.max(10, targetInterval - elapsed);
       setTimeout(globalCaptureLoop, nextDelay);
@@ -10373,6 +10384,7 @@
   }
   async function stopGlobalScan() {
     isGlobalActive = false;
+    hasActiveQR = false;
     await saveSettings({ globalActive: false });
     updateGlobalBadge(false);
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
@@ -10399,8 +10411,17 @@
       browser.action.setBadgeText({ text: "" });
     }
   }
+  if (browser.windows && browser.windows.onFocusChanged) {
+    browser.windows.onFocusChanged.addListener((windowId) => {
+      isWindowFocused = windowId !== browser.windows.WINDOW_ID_NONE;
+      if (isWindowFocused && isGlobalActive && !isLoopRunning) {
+        globalCaptureLoop();
+      }
+    });
+  }
   browser.tabs.onActivated.addListener(async ({ tabId }) => {
     if (isGlobalActive) {
+      hasActiveQR = false;
       await ensureInjected(tabId);
       browser.tabs.sendMessage(tabId, { type: "SCANNER_STARTED" }).catch(() => {
       });
@@ -10416,6 +10437,16 @@
   browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || !message.type) return;
     switch (message.type) {
+      case "SCROLL_START": {
+        isTabScrolling = true;
+        sendResponse({ ok: true });
+        return false;
+      }
+      case "SCROLL_END": {
+        isTabScrolling = false;
+        sendResponse({ ok: true });
+        return false;
+      }
       case "GET_STATUS":
       case "GET_GLOBAL_STATUS": {
         sendResponse({ active: isGlobalActive });

@@ -2544,7 +2544,7 @@ var init_overlay = __esm({
         }
       }
       /**
-       * Applies position and card orientation.
+       * Applies position and card orientation using GPU compositor.
        */
       applyPosition(x, y, width, height, isVisible) {
         if (!this.boxElement) return;
@@ -2553,10 +2553,15 @@ var init_overlay = __esm({
           return;
         }
         this.boxElement.style.visibility = "visible";
-        this.boxElement.style.left = `${Math.round(x)}px`;
-        this.boxElement.style.top = `${Math.round(y)}px`;
-        if (width > 0) this.boxElement.style.width = `${Math.round(width)}px`;
-        if (height > 0) this.boxElement.style.height = `${Math.round(height)}px`;
+        this.boxElement.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0)`;
+        if (width > 0 && this.lastWidth !== width) {
+          this.lastWidth = width;
+          this.boxElement.style.width = `${Math.round(width)}px`;
+        }
+        if (height > 0 && this.lastHeight !== height) {
+          this.lastHeight = height;
+          this.boxElement.style.height = `${Math.round(height)}px`;
+        }
         const spaceBelow = window.innerHeight - (y + height);
         if (spaceBelow < 180) {
           this.hudCard.classList.add("qr-flipped");

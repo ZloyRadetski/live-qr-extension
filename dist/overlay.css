@@ -21,11 +21,15 @@
   -webkit-font-smoothing: antialiased;
 }
 
-/* QR Bounding Box and Target Reticles */
+/* QR Bounding Box and Target Reticles (GPU-Accelerated) */
 .qr-radar-box {
   position: absolute;
+  top: 0;
+  left: 0;
+  will-change: transform;
+  transform-origin: 0 0;
   pointer-events: auto; /* Allows hover detection */
-  transition: opacity 0.25s ease;
+  transition: opacity 0.2s ease;
 }
 
 .qr-radar-box.qr-hidden {
