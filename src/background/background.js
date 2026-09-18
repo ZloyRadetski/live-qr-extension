@@ -46,6 +46,9 @@ let canvas = null;
 let ctx = null;
 let cropCanvas = null;
 let cropCtx = null;
+let remoteCanvas = null;
+let remoteCtx = null;
+let isCapturing = false;
 
 function getCanvas() {
   if (!canvas && typeof document !== 'undefined') {
@@ -61,6 +64,14 @@ function getCropCanvas() {
     cropCtx = cropCanvas.getContext('2d', { willReadFrequently: true });
   }
   return { cropCanvas, cropCtx };
+}
+
+function getRemoteCanvas() {
+  if (!remoteCanvas && typeof document !== 'undefined') {
+    remoteCanvas = document.createElement('canvas');
+    remoteCtx = remoteCanvas.getContext('2d', { willReadFrequently: true });
+  }
+  return { remoteCanvas, remoteCtx };
 }
 
 // ─── Decoder Web Worker ───────────────────────────────────────────────────────
@@ -150,23 +161,26 @@ for (let i = 0; i < B64_CHARS.length; i++) {
 
 /**
  * High-speed Base64 string to Uint8Array decoder using lookup table.
- * Avoids allocating intermediate 1.5MB binary strings via atob().
+ * Supports an optional startIndex to decode directly from a data URL
+ * without allocating intermediate substrings (e.g. dataUrl.slice()).
  * @param {string} b64 
+ * @param {number} [startIndex=0]
  * @returns {Uint8Array}
  */
-export function fastBase64ToBytes(b64) {
-  const len = b64.length;
+export function fastBase64ToBytes(b64, startIndex = 0) {
+  const len = b64.length - startIndex;
+  if (len <= 0) return new Uint8Array(0);
   let validLen = len;
-  if (len > 0 && b64.charCodeAt(len - 1) === 61) validLen--;
-  if (len > 1 && b64.charCodeAt(len - 2) === 61) validLen--;
+  if (len > 0 && b64.charCodeAt(startIndex + len - 1) === 61) validLen--;
+  if (len > 1 && b64.charCodeAt(startIndex + len - 2) === 61) validLen--;
   const byteLen = (validLen * 3) >> 2;
   const bytes = new Uint8Array(byteLen);
   let p = 0;
   for (let i = 0; i < validLen; i += 4) {
-    const enc1 = B64_LOOKUP[b64.charCodeAt(i)];
-    const enc2 = B64_LOOKUP[b64.charCodeAt(i + 1)];
-    const enc3 = B64_LOOKUP[b64.charCodeAt(i + 2)];
-    const enc4 = B64_LOOKUP[b64.charCodeAt(i + 3)];
+    const enc1 = B64_LOOKUP[b64.charCodeAt(startIndex + i)];
+    const enc2 = B64_LOOKUP[b64.charCodeAt(startIndex + i + 1)];
+    const enc3 = B64_LOOKUP[b64.charCodeAt(startIndex + i + 2)];
+    const enc4 = B64_LOOKUP[b64.charCodeAt(startIndex + i + 3)];
     bytes[p++] = (enc1 << 2) | (enc2 >> 4);
     if (p < byteLen) bytes[p++] = ((enc2 & 15) << 4) | (enc3 >> 2);
     if (p < byteLen) bytes[p++] = ((enc3 & 3) << 6) | enc4;
@@ -175,17 +189,23 @@ export function fastBase64ToBytes(b64) {
 }
 
 /**
- * Converts a data URL to a Blob using fast zero-intermediate-string decoding.
+ * Converts a data URL to a Blob with zero intermediate string allocations.
+ * Directly decodes from dataUrl into Uint8Array via startIndex offset.
  * @param {string} dataUrl
- * @returns {Blob}
+ * @returns {Blob | null}
  */
 export function dataUrlToBlob(dataUrl) {
+  if (!dataUrl || typeof dataUrl !== 'string') return null;
   const comma = dataUrl.indexOf(',');
   if (comma === -1) return null;
-  const mimeMatch = dataUrl.slice(0, comma).match(/:(.*?);/);
-  const mime = mimeMatch ? mimeMatch[1] : 'image/jpeg';
-  const base64 = dataUrl.slice(comma + 1);
-  const bytes = fastBase64ToBytes(base64);
+  let mime = 'image/jpeg';
+  if (comma > 5) {
+    const semi = dataUrl.indexOf(';', 5);
+    if (semi !== -1 && semi < comma) {
+      mime = dataUrl.slice(5, semi);
+    }
+  }
+  const bytes = fastBase64ToBytes(dataUrl, comma + 1);
   return new Blob([bytes], { type: mime });
 }
 
@@ -221,7 +241,7 @@ export function computeFrameHash(dataUrl) {
  * @param {{ rects: Array<{ left: number, top: number, width: number, height: number }>, dpr: number, viewportWidth?: number, viewportHeight?: number }} videoInfo
  * @returns {Promise<{ qrs: any[], qr: any, scanWidth: number, scanHeight: number, isDirectCrop: boolean } | null>}
  */
-export async function decodeVideoCrops(img, videoInfo) {
+export async function decodeVideoCrops(img, videoInfo, maxDim = 1920) {
   if (!videoInfo || !videoInfo.rects || videoInfo.rects.length === 0) return null;
   const { cropCanvas: cCanvas, cropCtx: cCtx } = getCropCanvas();
   if (!cCanvas || !cCtx) return null;
@@ -246,8 +266,8 @@ export async function decodeVideoCrops(img, videoInfo) {
 
     if (srcW < 24 || srcH < 24) continue;
 
-    // Downsample to max 720px for fast decode while preserving detection accuracy
-    const maxCropDim = 720;
+    // Preserve resolution up to maxDim (default 1080p+) so small QR codes in videos survive
+    const maxCropDim = Math.max(maxDim, 1080);
     let drawW = srcW, drawH = srcH;
     if (drawW > maxCropDim || drawH > maxCropDim) {
       const ratio = Math.min(maxCropDim / drawW, maxCropDim / drawH);
@@ -301,11 +321,11 @@ export async function decodeVideoCrops(img, videoInfo) {
  * then transfers pixels to the decoder Worker for jsQR (0 ms main-thread blocking).
  * Checks visible video player crops first at full resolution, then falls back to full-screen.
  * @param {string} dataUrl
- * @param {number} [maxW=720]
+ * @param {number} [maxW=1920]
  * @param {any} [videoInfo=null]
  * @returns {Promise<{ qrs: any[], qr: any, scanWidth: number, scanHeight: number } | null>}
  */
-export async function decodeDataUrl(dataUrl, maxW = 720, videoInfo = null) {
+export async function decodeDataUrl(dataUrl, maxW = 1920, videoInfo = null) {
   const { canvas, ctx } = getCanvas();
   if (!canvas || !ctx) return null;
 
@@ -322,20 +342,13 @@ export async function decodeDataUrl(dataUrl, maxW = 720, videoInfo = null) {
     // 1. High-speed targeted scan of visible video players
     const hasVideos = videoInfo && videoInfo.rects && videoInfo.rects.length > 0;
     if (hasVideos) {
-      const videoResult = await decodeVideoCrops(bitmap, videoInfo);
+      const videoResult = await decodeVideoCrops(bitmap, videoInfo, maxW);
       if (videoResult && videoResult.qrs && videoResult.qrs.length > 0) {
         return videoResult;
       }
     }
 
-    // 2. Full-screen scan fallback
-    // When video rects are active, skip full-screen fallback entirely:
-    // - Videos are handled by crop scanning above
-    // - Static page elements are handled by the content DOM scanner
-    // This eliminates an entire jsQR pass (~4-8ms) per frame during video playback.
-    if (hasVideos) {
-      return null;
-    }
+    // 2. Full-screen scan fallback (also catches QR codes outside video players)
 
     let w = bitmap.width;
     let h = bitmap.height;
@@ -396,75 +409,74 @@ async function ensureInjected(tabId) {
  * Adaptive continuous capture loop with dynamic sleep, blacklist, and scroll pause.
  */
 async function globalCaptureLoop() {
-  if (!isGlobalActive) {
-    isLoopRunning = false;
+  if (!isGlobalActive || isCapturing) {
+    if (!isGlobalActive) isLoopRunning = false;
     return;
   }
 
+  isCapturing = true;
   isLoopRunning = true;
   const loopStartTime = performance.now();
   const settings = await getCachedSettings();
 
-  // 1. Power Saver: Skip capture if window is blurred or (pauseOnScroll && actively scrolling)
-  const shouldPauseForScroll = (settings.pauseOnScroll !== false) && isTabScrolling;
-  if (!isWindowFocused || shouldPauseForScroll) {
-    setTimeout(globalCaptureLoop, 120);
-    return;
-  }
-
   try {
-    const tab = await getActiveTab();
+    // 1. Power Saver: Skip capture if window is blurred or (pauseOnScroll && actively scrolling)
+    const shouldPauseForScroll = (settings.pauseOnScroll !== false) && isTabScrolling;
+    if (!isWindowFocused || shouldPauseForScroll) {
+      loopTimer = setTimeout(globalCaptureLoop, 120);
+      return;
+    }
 
-    if (tab && tab.id && tab.windowId && !tab.url?.startsWith('about:')) {
-      // 2. Check exclusion blacklist
-      if (isDomainBlacklisted(tab.url, settings.blacklist)) {
-        setTimeout(globalCaptureLoop, 500);
-        return;
-      }
+    try {
+      const tab = await getActiveTab();
 
-      // Configure resolution and JPEG quality according to user settings.
-      // With Wasm running in Worker (~10 ms), full 1080p native resolution ensures
-      // small QR codes (e.g. 40x40px on high-DPI or large screens) are not destroyed by downsampling.
-      const resolution = settings.scanResolution || '1080';
-      let maxW = 1920;
-      let quality = 78;
-      if (resolution === '720') {
-        maxW = 1280;  // provides at least 1280px width so small QR codes survive downsampling
-        quality = 75;
-      } else if (resolution === '1440') {
-        maxW = 2560;
-        quality = 85;
-      }
+      if (tab && tab.id && tab.windowId && !tab.url?.startsWith('about:')) {
+        // 2. Check exclusion blacklist
+        if (isDomainBlacklisted(tab.url, settings.blacklist)) {
+          loopTimer = setTimeout(globalCaptureLoop, 500);
+          return;
+        }
 
-      const dataUrl = await browser.tabs.captureVisibleTab(tab.windowId, {
-        format: 'jpeg',
-        quality
-      });
+        // Configure resolution and JPEG quality according to user settings.
+        // With Wasm running in Worker (~10 ms), full 1080p native resolution ensures
+        // small QR codes (e.g. 40x40px on high-DPI or large screens) are not destroyed by downsampling.
+        const resolution = settings.scanResolution || '1080';
+        let maxW = 1920;
+        let quality = 78;
+        if (resolution === '720') {
+          maxW = 1280;  // provides at least 1280px width so small QR codes survive downsampling
+          quality = 75;
+        } else if (resolution === '1440') {
+          maxW = 2560;
+          quality = 85;
+        }
 
-      if (dataUrl && isGlobalActive && !isTabScrolling) {
-        const frameHash = computeFrameHash(dataUrl);
+        const dataUrl = await browser.tabs.captureVisibleTab(tab.windowId, {
+          format: 'jpeg',
+          quality
+        });
 
-        if (frameHash === lastFrameHash) {
-          if (hasActiveQR) {
-            // QR is locked, frame is identical — safe to reuse previous result without re-decoding
-            unchangedEmptyFrames = 0;
-            const userFps = Math.max(1, Math.min(30, Number(settings.scanRate) || 2));
-            loopTimer = setTimeout(globalCaptureLoop, Math.round(1000 / userFps));
-            return;
-          } else {
-            unchangedEmptyFrames++;
-            if (unchangedEmptyFrames >= 2) {
-              // Frame was verified twice with no QR detected and is static.
-              // Deep idle sleep: after 4 unchanged frames, poll only once every 1200ms.
-              const idleDelay = unchangedEmptyFrames >= 4 ? 1200 : 500;
+        if (dataUrl && isGlobalActive && !isTabScrolling) {
+          const frameHash = computeFrameHash(dataUrl);
+
+          if (frameHash === lastFrameHash) {
+            if (hasActiveQR) {
+              // QR is locked, frame is identical — safe to reuse previous result without re-decoding
+              unchangedEmptyFrames = 0;
+              const userFps = Math.max(1, Math.min(30, Number(settings.scanRate) || 2));
+              loopTimer = setTimeout(globalCaptureLoop, Math.round(1000 / userFps));
+              return;
+            } else {
+              // Frame is identical and has no QR — skip decode immediately
+              unchangedEmptyFrames++;
+              const idleDelay = unchangedEmptyFrames >= 3 ? 1200 : 500;
               loopTimer = setTimeout(globalCaptureLoop, idleDelay);
               return;
             }
+          } else {
+            unchangedEmptyFrames = 0;
+            lastFrameHash = frameHash;
           }
-        } else {
-          unchangedEmptyFrames = 0;
-          lastFrameHash = frameHash;
-        }
 
         const videoInfo = tabVideoRects.get(tab.id) || null;
         const decoded = await decodeDataUrl(dataUrl, maxW, videoInfo);
@@ -509,23 +521,26 @@ async function globalCaptureLoop() {
     // Tab switching or window hidden
   }
 
-  if (isGlobalActive) {
-    // User-configured FPS from 1 to 30 (Slider setting):
-    const userFps = Math.max(1, Math.min(30, Number(settings.scanRate) || 2));
+    if (isGlobalActive) {
+      // User-configured FPS from 1 to 30 (Slider setting):
+      const userFps = Math.max(1, Math.min(30, Number(settings.scanRate) || 2));
 
-    // When a QR code is on screen, run at full userFps for fast tracking (up to 30 FPS).
-    // When idle (no QR code on screen), cap idle scan loop at 6 FPS to avoid burning CPU on empty screens.
-    const effectiveFps = hasActiveQR
-      ? userFps
-      : Math.max(1, Math.min(6, userFps));
+      // When a QR code is on screen, run at full userFps for fast tracking (up to 30 FPS).
+      // When idle (no QR code on screen), cap idle scan loop at 6 FPS to avoid burning CPU on empty screens.
+      const effectiveFps = hasActiveQR
+        ? userFps
+        : Math.max(1, Math.min(6, userFps));
 
-    const targetInterval = Math.round(1000 / effectiveFps);
-    const elapsed = performance.now() - loopStartTime;
-    const nextDelay = Math.max(4, targetInterval - elapsed);
+      const targetInterval = Math.round(1000 / effectiveFps);
+      const elapsed = performance.now() - loopStartTime;
+      const nextDelay = Math.max(4, targetInterval - elapsed);
 
-    loopTimer = setTimeout(globalCaptureLoop, nextDelay);
-  } else {
-    isLoopRunning = false;
+      loopTimer = setTimeout(globalCaptureLoop, nextDelay);
+    } else {
+      isLoopRunning = false;
+    }
+  } finally {
+    isCapturing = false;
   }
 }
 
@@ -678,13 +693,14 @@ export async function fetchRemoteImageAndDecode(url) {
         h = Math.round(h * ratio);
       }
 
-      const { canvas, ctx } = getCanvas();
-      if (canvas.width !== w || canvas.height !== h) {
-        canvas.width = w;
-        canvas.height = h;
+      const { remoteCanvas: rCanvas, remoteCtx: rCtx } = getRemoteCanvas();
+      if (!rCanvas || !rCtx) return [];
+      if (rCanvas.width !== w || rCanvas.height !== h) {
+        rCanvas.width = w;
+        rCanvas.height = h;
       }
-      ctx.drawImage(bitmap, 0, 0, w, h);
-      const imgData = ctx.getImageData(0, 0, w, h);
+      rCtx.drawImage(bitmap, 0, 0, w, h);
+      const imgData = rCtx.getImageData(0, 0, w, h);
       const qrs = await decodeWithWorker(imgData.data.buffer, w, h, 4);
 
       const normalized = (qrs || []).map((q) => ({

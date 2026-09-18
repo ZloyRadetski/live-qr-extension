@@ -94,6 +94,12 @@ test('fastBase64ToBytes accurately decodes base64 strings with all padding varia
     const b64 = expected.toString('base64');
     const decoded = fastBase64ToBytes(b64);
     assert.deepEqual(Buffer.from(decoded), expected, `Mismatch decoding base64 for sample length ${str.length}`);
+
+    // Verify startIndex offset works identically without slicing
+    const prefix = 'data:image/jpeg;base64,';
+    const withPrefix = prefix + b64;
+    const decodedWithOffset = fastBase64ToBytes(withPrefix, prefix.length);
+    assert.deepEqual(Buffer.from(decodedWithOffset), expected, `Mismatch decoding base64 with startIndex for sample length ${str.length}`);
   }
 });
 

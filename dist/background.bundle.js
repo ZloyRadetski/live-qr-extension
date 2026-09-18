@@ -2227,6 +2227,9 @@
   var ctx = null;
   var cropCanvas = null;
   var cropCtx = null;
+  var remoteCanvas = null;
+  var remoteCtx = null;
+  var isCapturing = false;
   function getCanvas() {
     if (!canvas && typeof document !== "undefined") {
       canvas = document.createElement("canvas");
@@ -2240,6 +2243,13 @@
       cropCtx = cropCanvas.getContext("2d", { willReadFrequently: true });
     }
     return { cropCanvas, cropCtx };
+  }
+  function getRemoteCanvas() {
+    if (!remoteCanvas && typeof document !== "undefined") {
+      remoteCanvas = document.createElement("canvas");
+      remoteCtx = remoteCanvas.getContext("2d", { willReadFrequently: true });
+    }
+    return { remoteCanvas, remoteCtx };
   }
   var decoderWorker = null;
   var workerMsgId = 0;
@@ -2301,19 +2311,20 @@
   for (let i2 = 0; i2 < B64_CHARS.length; i2++) {
     B64_LOOKUP[B64_CHARS.charCodeAt(i2)] = i2;
   }
-  function fastBase64ToBytes(b64) {
-    const len = b64.length;
+  function fastBase64ToBytes(b64, startIndex = 0) {
+    const len = b64.length - startIndex;
+    if (len <= 0) return new Uint8Array(0);
     let validLen = len;
-    if (len > 0 && b64.charCodeAt(len - 1) === 61) validLen--;
-    if (len > 1 && b64.charCodeAt(len - 2) === 61) validLen--;
+    if (len > 0 && b64.charCodeAt(startIndex + len - 1) === 61) validLen--;
+    if (len > 1 && b64.charCodeAt(startIndex + len - 2) === 61) validLen--;
     const byteLen = validLen * 3 >> 2;
     const bytes = new Uint8Array(byteLen);
     let p2 = 0;
     for (let i2 = 0; i2 < validLen; i2 += 4) {
-      const enc1 = B64_LOOKUP[b64.charCodeAt(i2)];
-      const enc2 = B64_LOOKUP[b64.charCodeAt(i2 + 1)];
-      const enc3 = B64_LOOKUP[b64.charCodeAt(i2 + 2)];
-      const enc4 = B64_LOOKUP[b64.charCodeAt(i2 + 3)];
+      const enc1 = B64_LOOKUP[b64.charCodeAt(startIndex + i2)];
+      const enc2 = B64_LOOKUP[b64.charCodeAt(startIndex + i2 + 1)];
+      const enc3 = B64_LOOKUP[b64.charCodeAt(startIndex + i2 + 2)];
+      const enc4 = B64_LOOKUP[b64.charCodeAt(startIndex + i2 + 3)];
       bytes[p2++] = enc1 << 2 | enc2 >> 4;
       if (p2 < byteLen) bytes[p2++] = (enc2 & 15) << 4 | enc3 >> 2;
       if (p2 < byteLen) bytes[p2++] = (enc3 & 3) << 6 | enc4;
@@ -2321,12 +2332,17 @@
     return bytes;
   }
   function dataUrlToBlob(dataUrl) {
+    if (!dataUrl || typeof dataUrl !== "string") return null;
     const comma = dataUrl.indexOf(",");
     if (comma === -1) return null;
-    const mimeMatch = dataUrl.slice(0, comma).match(/:(.*?);/);
-    const mime = mimeMatch ? mimeMatch[1] : "image/jpeg";
-    const base64 = dataUrl.slice(comma + 1);
-    const bytes = fastBase64ToBytes(base64);
+    let mime = "image/jpeg";
+    if (comma > 5) {
+      const semi = dataUrl.indexOf(";", 5);
+      if (semi !== -1 && semi < comma) {
+        mime = dataUrl.slice(5, semi);
+      }
+    }
+    const bytes = fastBase64ToBytes(dataUrl, comma + 1);
     return new Blob([bytes], { type: mime });
   }
   var tabVideoRects = /* @__PURE__ */ new Map();
@@ -2341,7 +2357,7 @@
     }
     return hash;
   }
-  async function decodeVideoCrops(img, videoInfo) {
+  async function decodeVideoCrops(img, videoInfo, maxDim = 1920) {
     if (!videoInfo || !videoInfo.rects || videoInfo.rects.length === 0) return null;
     const { cropCanvas: cCanvas, cropCtx: cCtx } = getCropCanvas();
     if (!cCanvas || !cCtx) return null;
@@ -2365,7 +2381,7 @@
       if (srcX + srcW > imgW) srcW = imgW - srcX;
       if (srcY + srcH > imgH) srcH = imgH - srcY;
       if (srcW < 24 || srcH < 24) continue;
-      const maxCropDim = 720;
+      const maxCropDim = Math.max(maxDim, 1080);
       let drawW = srcW, drawH = srcH;
       if (drawW > maxCropDim || drawH > maxCropDim) {
         const ratio = Math.min(maxCropDim / drawW, maxCropDim / drawH);
@@ -2401,7 +2417,7 @@
     }
     return null;
   }
-  async function decodeDataUrl(dataUrl, maxW = 720, videoInfo = null) {
+  async function decodeDataUrl(dataUrl, maxW = 1920, videoInfo = null) {
     const { canvas: canvas2, ctx: ctx2 } = getCanvas();
     if (!canvas2 || !ctx2) return null;
     let bitmap;
@@ -2414,13 +2430,10 @@
     try {
       const hasVideos = videoInfo && videoInfo.rects && videoInfo.rects.length > 0;
       if (hasVideos) {
-        const videoResult = await decodeVideoCrops(bitmap, videoInfo);
+        const videoResult = await decodeVideoCrops(bitmap, videoInfo, maxW);
         if (videoResult && videoResult.qrs && videoResult.qrs.length > 0) {
           return videoResult;
         }
-      }
-      if (hasVideos) {
-        return null;
       }
       let w3 = bitmap.width;
       let h2 = bitmap.height;
@@ -2462,108 +2475,111 @@
     }
   }
   async function globalCaptureLoop() {
-    if (!isGlobalActive) {
-      isLoopRunning = false;
+    if (!isGlobalActive || isCapturing) {
+      if (!isGlobalActive) isLoopRunning = false;
       return;
     }
+    isCapturing = true;
     isLoopRunning = true;
     const loopStartTime = performance.now();
     const settings = await getCachedSettings();
-    const shouldPauseForScroll = settings.pauseOnScroll !== false && isTabScrolling;
-    if (!isWindowFocused || shouldPauseForScroll) {
-      setTimeout(globalCaptureLoop, 120);
-      return;
-    }
     try {
-      const tab = await getActiveTab();
-      if (tab && tab.id && tab.windowId && !tab.url?.startsWith("about:")) {
-        if (isDomainBlacklisted(tab.url, settings.blacklist)) {
-          setTimeout(globalCaptureLoop, 500);
-          return;
-        }
-        const resolution = settings.scanResolution || "1080";
-        let maxW = 1920;
-        let quality = 78;
-        if (resolution === "720") {
-          maxW = 1280;
-          quality = 75;
-        } else if (resolution === "1440") {
-          maxW = 2560;
-          quality = 85;
-        }
-        const dataUrl = await browser.tabs.captureVisibleTab(tab.windowId, {
-          format: "jpeg",
-          quality
-        });
-        if (dataUrl && isGlobalActive && !isTabScrolling) {
-          const frameHash = computeFrameHash(dataUrl);
-          if (frameHash === lastFrameHash) {
-            if (hasActiveQR) {
-              unchangedEmptyFrames = 0;
-              const userFps = Math.max(1, Math.min(30, Number(settings.scanRate) || 2));
-              loopTimer = setTimeout(globalCaptureLoop, Math.round(1e3 / userFps));
-              return;
-            } else {
-              unchangedEmptyFrames++;
-              if (unchangedEmptyFrames >= 2) {
-                const idleDelay = unchangedEmptyFrames >= 4 ? 1200 : 500;
+      const shouldPauseForScroll = settings.pauseOnScroll !== false && isTabScrolling;
+      if (!isWindowFocused || shouldPauseForScroll) {
+        loopTimer = setTimeout(globalCaptureLoop, 120);
+        return;
+      }
+      try {
+        const tab = await getActiveTab();
+        if (tab && tab.id && tab.windowId && !tab.url?.startsWith("about:")) {
+          if (isDomainBlacklisted(tab.url, settings.blacklist)) {
+            loopTimer = setTimeout(globalCaptureLoop, 500);
+            return;
+          }
+          const resolution = settings.scanResolution || "1080";
+          let maxW = 1920;
+          let quality = 78;
+          if (resolution === "720") {
+            maxW = 1280;
+            quality = 75;
+          } else if (resolution === "1440") {
+            maxW = 2560;
+            quality = 85;
+          }
+          const dataUrl = await browser.tabs.captureVisibleTab(tab.windowId, {
+            format: "jpeg",
+            quality
+          });
+          if (dataUrl && isGlobalActive && !isTabScrolling) {
+            const frameHash = computeFrameHash(dataUrl);
+            if (frameHash === lastFrameHash) {
+              if (hasActiveQR) {
+                unchangedEmptyFrames = 0;
+                const userFps = Math.max(1, Math.min(30, Number(settings.scanRate) || 2));
+                loopTimer = setTimeout(globalCaptureLoop, Math.round(1e3 / userFps));
+                return;
+              } else {
+                unchangedEmptyFrames++;
+                const idleDelay = unchangedEmptyFrames >= 3 ? 1200 : 500;
                 loopTimer = setTimeout(globalCaptureLoop, idleDelay);
                 return;
               }
+            } else {
+              unchangedEmptyFrames = 0;
+              lastFrameHash = frameHash;
             }
-          } else {
-            unchangedEmptyFrames = 0;
-            lastFrameHash = frameHash;
-          }
-          const videoInfo = tabVideoRects.get(tab.id) || null;
-          const decoded = await decodeDataUrl(dataUrl, maxW, videoInfo);
-          if (decoded && decoded.qrs && decoded.qrs.length > 0) {
-            const wasActive = hasActiveQR;
-            hasActiveQR = true;
-            const newDataKeys = decoded.qrs.map((q2) => q2.data).join("|");
-            if (!wasActive || newDataKeys !== lastQrDataSnapshot) {
-              lastQrDataSnapshot = newDataKeys;
-              for (const qr of decoded.qrs) {
-                if (!reportedQrDataThisSession.has(qr.data)) {
-                  reportedQrDataThisSession.add(qr.data);
-                  const parsed = classifyContent(qr.data);
-                  addScanHistory({
-                    text: qr.data,
-                    type: parsed.type,
-                    title: parsed.title
-                  }).catch(() => {
-                  });
+            const videoInfo = tabVideoRects.get(tab.id) || null;
+            const decoded = await decodeDataUrl(dataUrl, maxW, videoInfo);
+            if (decoded && decoded.qrs && decoded.qrs.length > 0) {
+              const wasActive = hasActiveQR;
+              hasActiveQR = true;
+              const newDataKeys = decoded.qrs.map((q2) => q2.data).join("|");
+              if (!wasActive || newDataKeys !== lastQrDataSnapshot) {
+                lastQrDataSnapshot = newDataKeys;
+                for (const qr of decoded.qrs) {
+                  if (!reportedQrDataThisSession.has(qr.data)) {
+                    reportedQrDataThisSession.add(qr.data);
+                    const parsed = classifyContent(qr.data);
+                    addScanHistory({
+                      text: qr.data,
+                      type: parsed.type,
+                      title: parsed.title
+                    }).catch(() => {
+                    });
+                  }
                 }
               }
+              browser.tabs.sendMessage(tab.id, {
+                type: "QR_DETECTED",
+                qrResults: decoded.qrs,
+                qrResult: decoded.qr,
+                scanWidth: decoded.scanWidth,
+                scanHeight: decoded.scanHeight
+              }).catch(() => {
+              });
+            } else {
+              hasActiveQR = false;
+              browser.tabs.sendMessage(tab.id, {
+                type: "QR_NOT_FOUND"
+              }).catch(() => {
+              });
             }
-            browser.tabs.sendMessage(tab.id, {
-              type: "QR_DETECTED",
-              qrResults: decoded.qrs,
-              qrResult: decoded.qr,
-              scanWidth: decoded.scanWidth,
-              scanHeight: decoded.scanHeight
-            }).catch(() => {
-            });
-          } else {
-            hasActiveQR = false;
-            browser.tabs.sendMessage(tab.id, {
-              type: "QR_NOT_FOUND"
-            }).catch(() => {
-            });
           }
         }
+      } catch (err) {
       }
-    } catch (err) {
-    }
-    if (isGlobalActive) {
-      const userFps = Math.max(1, Math.min(30, Number(settings.scanRate) || 2));
-      const effectiveFps = hasActiveQR ? userFps : Math.max(1, Math.min(6, userFps));
-      const targetInterval = Math.round(1e3 / effectiveFps);
-      const elapsed = performance.now() - loopStartTime;
-      const nextDelay = Math.max(4, targetInterval - elapsed);
-      loopTimer = setTimeout(globalCaptureLoop, nextDelay);
-    } else {
-      isLoopRunning = false;
+      if (isGlobalActive) {
+        const userFps = Math.max(1, Math.min(30, Number(settings.scanRate) || 2));
+        const effectiveFps = hasActiveQR ? userFps : Math.max(1, Math.min(6, userFps));
+        const targetInterval = Math.round(1e3 / effectiveFps);
+        const elapsed = performance.now() - loopStartTime;
+        const nextDelay = Math.max(4, targetInterval - elapsed);
+        loopTimer = setTimeout(globalCaptureLoop, nextDelay);
+      } else {
+        isLoopRunning = false;
+      }
+    } finally {
+      isCapturing = false;
     }
   }
   async function startGlobalScan() {
@@ -2682,13 +2698,14 @@
           w3 = Math.round(w3 * ratio);
           h2 = Math.round(h2 * ratio);
         }
-        const { canvas: canvas2, ctx: ctx2 } = getCanvas();
-        if (canvas2.width !== w3 || canvas2.height !== h2) {
-          canvas2.width = w3;
-          canvas2.height = h2;
+        const { remoteCanvas: rCanvas, remoteCtx: rCtx } = getRemoteCanvas();
+        if (!rCanvas || !rCtx) return [];
+        if (rCanvas.width !== w3 || rCanvas.height !== h2) {
+          rCanvas.width = w3;
+          rCanvas.height = h2;
         }
-        ctx2.drawImage(bitmap, 0, 0, w3, h2);
-        const imgData = ctx2.getImageData(0, 0, w3, h2);
+        rCtx.drawImage(bitmap, 0, 0, w3, h2);
+        const imgData = rCtx.getImageData(0, 0, w3, h2);
         const qrs = await decodeWithWorker(imgData.data.buffer, w3, h2, 4);
         const normalized = (qrs || []).map((q2) => ({
           data: q2.data,
