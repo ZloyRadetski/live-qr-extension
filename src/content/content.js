@@ -336,7 +336,7 @@ window.addEventListener('resize', () => {
 
 // SPA Navigation support (YouTube yt-navigate-finish, popstate, hashchange)
 function onSpaNavigation() {
-  getSettings().then((settings) => {
+  getCachedContentSettings().then((settings) => {
     if (settings && settings.globalActive) {
       if (!overlay) {
         initOverlay();

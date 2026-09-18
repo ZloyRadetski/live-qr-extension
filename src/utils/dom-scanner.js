@@ -119,6 +119,28 @@ export function scanMediaElement(el, maxDimension = 1200) {
     if (el.readyState < 2 || !el.videoWidth || !el.videoHeight) return [];
     width = el.videoWidth;
     height = el.videoHeight;
+
+    // Per-frame cache: skip jsQR if video frame hasn't advanced since last scan
+    // currentTime is a float in seconds; changes every rendered frame
+    const currentTime = el.currentTime;
+    if (el._qrRadarVideoTime === currentTime && el._qrRadarCached !== undefined) {
+      if (!el._qrRadarCached || el._qrRadarCached.length === 0) return [];
+      const rect = el.getBoundingClientRect();
+      const scaleX = rect.width / el._qrRadarCachedW;
+      const scaleY = rect.height / el._qrRadarCachedH;
+      return el._qrRadarCached.map((item) => ({
+        data: item.data,
+        location: {
+          topLeftCorner: { x: rect.left + item.loc.topLeftCorner.x * scaleX, y: rect.top + item.loc.topLeftCorner.y * scaleY },
+          topRightCorner: { x: rect.left + item.loc.topRightCorner.x * scaleX, y: rect.top + item.loc.topRightCorner.y * scaleY },
+          bottomRightCorner: { x: rect.left + item.loc.bottomRightCorner.x * scaleX, y: rect.top + item.loc.bottomRightCorner.y * scaleY },
+          bottomLeftCorner: { x: rect.left + item.loc.bottomLeftCorner.x * scaleX, y: rect.top + item.loc.bottomLeftCorner.y * scaleY }
+        },
+        rect,
+        element: el,
+        isDom: true
+      }));
+    }
   } else {
     return [];
   }
@@ -126,11 +148,14 @@ export function scanMediaElement(el, maxDimension = 1200) {
   // Skip tiny icons that cannot possibly be QR codes (< 20px)
   if (width < 20 || height < 20) return [];
 
-  // Scale down if insanely large (> 1200px)
+  // Scale down for optimal speed/accuracy balance
+  // IMG: cap at maxDimension (1200px default)
+  // VIDEO: cap at 720px — high-res not needed, jsQR works well at moderate resolution
+  const effectiveMax = el.tagName === 'VIDEO' ? Math.min(maxDimension, 720) : maxDimension;
   let scanW = width;
   let scanH = height;
-  if (scanW > maxDimension || scanH > maxDimension) {
-    const ratio = Math.min(maxDimension / scanW, maxDimension / scanH);
+  if (scanW > effectiveMax || scanH > effectiveMax) {
+    const ratio = Math.min(effectiveMax / scanW, effectiveMax / scanH);
     scanW = Math.round(scanW * ratio);
     scanH = Math.round(scanH * ratio);
   }
@@ -149,9 +174,9 @@ export function scanMediaElement(el, maxDimension = 1200) {
     let count = 0;
 
     while (count < maxPerElement) {
-      const code = jsQR(imgData.data, scanW, scanH, {
-        inversionAttempts: 'attemptBoth'
-      });
+      // For VIDEO: skip inverted attempts (rare for video content, saves ~50% jsQR time)
+      const inversion = el.tagName === 'VIDEO' ? 'dontInvert' : 'attemptBoth';
+      const code = jsQR(imgData.data, scanW, scanH, { inversionAttempts: inversion });
       if (!code) break;
 
       const rect = el.getBoundingClientRect();
@@ -192,11 +217,13 @@ export function scanMediaElement(el, maxDimension = 1200) {
       imgData = ctx.getImageData(0, 0, scanW, scanH);
     }
 
-    if (el.tagName === 'IMG') {
+    if (el.tagName === 'IMG' || el.tagName === 'VIDEO') {
       const currentSrc = el.currentSrc || el.src;
       el._qrRadarCachedSrc = currentSrc;
       el._qrRadarCachedW = scanW;
       el._qrRadarCachedH = scanH;
+      // Store video frame timestamp for per-frame cache
+      if (el.tagName === 'VIDEO') el._qrRadarVideoTime = el.currentTime;
       el._qrRadarCached = found.map((f) => ({
         data: f.data,
         loc: {
