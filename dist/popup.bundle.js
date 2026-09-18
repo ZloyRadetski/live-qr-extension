@@ -212,18 +212,18 @@
         const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
         if (tab && tab.id) {
           activeTabId = tab.id;
-          try {
-            const response = await browser.tabs.sendMessage(activeTabId, { type: "GET_STATUS" });
-            if (response && response.active !== void 0) {
-              updateUIState(response.active);
-              return;
-            }
-          } catch {
+          const response = await browser.runtime.sendMessage({
+            type: "GET_STATUS",
+            tabId: activeTabId
+          });
+          if (response && response.active !== void 0) {
+            updateUIState(response.active);
+            return;
           }
         }
       }
     } catch (err) {
-      console.warn("[QR-Radar Popup] Error querying active tab:", err);
+      console.warn("[QR-Radar Popup] Error querying background service:", err);
     }
     updateUIState(false);
   }
@@ -243,33 +243,20 @@
   }
   async function handleToggleClick() {
     if (!activeTabId) return;
-    const targetState = !isScannerActive;
+    const targetType = isScannerActive ? "STOP_SCAN" : "START_SCAN";
     try {
-      const msgType = targetState ? "START_SCAN" : "STOP_SCAN";
-      const response = await browser.tabs.sendMessage(activeTabId, { type: msgType });
+      const response = await browser.runtime.sendMessage({
+        type: targetType,
+        tabId: activeTabId
+      });
       if (response && response.active !== void 0) {
         updateUIState(response.active);
-        window.close();
-      }
-    } catch {
-      try {
-        await browser.scripting.insertCSS({
-          target: { tabId: activeTabId },
-          files: ["dist/overlay.css"]
-        });
-        await browser.scripting.executeScript({
-          target: { tabId: activeTabId },
-          files: ["dist/content.bundle.js"]
-        });
-        const res = await browser.tabs.sendMessage(activeTabId, { type: "START_SCAN" });
-        if (res && res.active !== void 0) {
-          updateUIState(res.active);
+        if (response.active) {
           window.close();
         }
-      } catch (injErr) {
-        console.error("[QR-Radar Popup] Failed to inject or start scanner:", injErr);
-        alert("Could not start scanner on this page. Note: system pages (about:*) cannot be scripted.");
       }
+    } catch (err) {
+      console.error("[QR-Radar Popup] Failed to toggle scanner:", err);
     }
   }
   async function updateSettings(updates) {

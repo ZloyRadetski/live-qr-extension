@@ -20,7 +20,7 @@
     }
   },
   "background": {
-    "scripts": ["src/background/background.js"]
+    "scripts": ["dist/background.bundle.js"]
   },
   "content_scripts": [
     {
@@ -34,6 +34,9 @@
     "activeTab",
     "storage",
     "scripting"
+  ],
+  "host_permissions": [
+    "<all_urls>"
   ],
   "commands": {
     "toggle-scanner": {

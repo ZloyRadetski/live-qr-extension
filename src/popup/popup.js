@@ -1,6 +1,6 @@
 /**
  * QR Radar Popup Controller.
- * Manages UI state, communicates with the active tab, and handles settings/history.
+ * Communicates directly with background service for instant, native scanning.
  */
 
 import { getSettings, saveSettings, getScanHistory, clearScanHistory } from '../utils/storage.js';
@@ -37,7 +37,6 @@ async function init() {
 async function loadPreferences() {
   const settings = await getSettings();
 
-  // Set FPS active button
   const currentFps = String(settings.scanRate || 15);
   fpsSelector.querySelectorAll('.segment-btn').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.fps === currentFps);
@@ -48,7 +47,7 @@ async function loadPreferences() {
 }
 
 /**
- * Detects current active tab and checks its scanner state.
+ * Detects current active tab and checks its scanner state from background service.
  */
 async function refreshActiveTab() {
   try {
@@ -57,20 +56,20 @@ async function refreshActiveTab() {
       if (tab && tab.id) {
         activeTabId = tab.id;
 
-        // Query content script status
-        try {
-          const response = await browser.tabs.sendMessage(activeTabId, { type: 'GET_STATUS' });
-          if (response && response.active !== undefined) {
-            updateUIState(response.active);
-            return;
-          }
-        } catch {
-          // Content script may not be loaded yet
+        // Query background service status
+        const response = await browser.runtime.sendMessage({
+          type: 'GET_STATUS',
+          tabId: activeTabId
+        });
+
+        if (response && response.active !== undefined) {
+          updateUIState(response.active);
+          return;
         }
       }
     }
   } catch (err) {
-    console.warn('[QR-Radar Popup] Error querying active tab:', err);
+    console.warn('[QR-Radar Popup] Error querying background service:', err);
   }
 
   updateUIState(false);
@@ -96,42 +95,27 @@ function updateUIState(active) {
 }
 
 /**
- * Toggles scanner on the active tab.
+ * Toggles scanner on the active tab via background service.
  */
 async function handleToggleClick() {
   if (!activeTabId) return;
 
-  const targetState = !isScannerActive;
+  const targetType = isScannerActive ? 'STOP_SCAN' : 'START_SCAN';
 
   try {
-    // Attempt sending message directly
-    const msgType = targetState ? 'START_SCAN' : 'STOP_SCAN';
-    const response = await browser.tabs.sendMessage(activeTabId, { type: msgType });
+    const response = await browser.runtime.sendMessage({
+      type: targetType,
+      tabId: activeTabId
+    });
 
     if (response && response.active !== undefined) {
       updateUIState(response.active);
-      window.close(); // Close popup so user sees full tab HUD and stream dialog
-    }
-  } catch {
-    // Inject scripts if content script wasn't active on this page
-    try {
-      await browser.scripting.insertCSS({
-        target: { tabId: activeTabId },
-        files: ['dist/overlay.css']
-      });
-      await browser.scripting.executeScript({
-        target: { tabId: activeTabId },
-        files: ['dist/content.bundle.js']
-      });
-      const res = await browser.tabs.sendMessage(activeTabId, { type: 'START_SCAN' });
-      if (res && res.active !== undefined) {
-        updateUIState(res.active);
-        window.close();
+      if (response.active) {
+        window.close(); // Close popup so user sees tab HUD immediately
       }
-    } catch (injErr) {
-      console.error('[QR-Radar Popup] Failed to inject or start scanner:', injErr);
-      alert('Could not start scanner on this page. Note: system pages (about:*) cannot be scripted.');
     }
+  } catch (err) {
+    console.error('[QR-Radar Popup] Failed to toggle scanner:', err);
   }
 }
 
@@ -148,7 +132,7 @@ async function updateSettings(updates) {
         settings: newSettings
       });
     } catch {
-      // Tab not ready
+      // Tab not loaded yet
     }
   }
 }

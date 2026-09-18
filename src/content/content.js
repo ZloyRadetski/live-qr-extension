@@ -1,21 +1,19 @@
 /**
  * QR Radar Content Script.
- * Coordinates the stream scanner, HUD overlay, and communication with background/popup.
+ * Manages the on-screen HUD overlay and receives detection updates from background service.
  */
 
-import { StreamScanner } from './stream-scanner.js';
 import { QROverlayManager } from './overlay.js';
 import { getSettings } from '../utils/storage.js';
 
-let scanner = null;
 let overlay = null;
-let isScanning = false;
+let isMounted = false;
 
 /**
- * Initializes and starts the QR code radar scanner.
+ * Initializes or mounts overlay HUD.
  */
-async function startScanning() {
-  if (isScanning) return { success: true, active: true };
+async function initOverlay() {
+  if (overlay && isMounted) return overlay;
 
   const settings = await getSettings();
 
@@ -23,139 +21,98 @@ async function startScanning() {
     soundEnabled: settings.soundEnabled,
     autoCopy: settings.autoCopy,
     onStopRequested: () => {
-      stopScanning();
+      // Notify background to stop capture loop
+      try {
+        browser.runtime.sendMessage({ type: 'STOP_SCAN' }).catch(() => {});
+      } catch {}
+      teardownOverlay();
     }
   });
 
-  scanner = new StreamScanner({
-    fps: settings.scanRate || 15,
-    onFrame: (qrResult, scaleX, scaleY) => {
-      if (overlay) {
-        overlay.update(qrResult, scaleX, scaleY);
-      }
-    },
-    onStopped: () => {
-      cleanup();
-      notifyState(false);
-    },
-    onError: (err) => {
-      console.warn('[QR-Radar] Stream error or cancelled:', err);
-      cleanup();
-      notifyState(false);
-    }
-  });
-
-  try {
-    await scanner.start();
-    isScanning = true;
-    overlay.mount();
-    notifyState(true);
-    return { success: true, active: true };
-  } catch (err) {
-    cleanup();
-    notifyState(false);
-    return { success: false, error: err.message || 'Permission denied' };
-  }
+  overlay.mount();
+  isMounted = true;
+  return overlay;
 }
 
 /**
- * Stops scanner and cleans up HUD.
+ * Unmounts overlay and clears state.
  */
-function stopScanning() {
-  if (!isScanning && !scanner) return { success: true, active: false };
-  cleanup();
-  notifyState(false);
-  return { success: true, active: false };
-}
-
-/**
- * Cleanup helper.
- */
-function cleanup() {
-  isScanning = false;
-  if (scanner) {
-    scanner.stop();
-    scanner = null;
-  }
+function teardownOverlay() {
   if (overlay) {
     overlay.unmount();
     overlay = null;
   }
+  isMounted = false;
 }
 
-/**
- * Notifies background script of active status so toolbar badge updates.
- */
-function notifyState(active) {
-  try {
-    if (typeof browser !== 'undefined' && browser.runtime) {
-      browser.runtime.sendMessage({
-        type: 'SCANNER_STATE_CHANGED',
-        active
-      }).catch(() => {});
-    }
-  } catch {
-    // Ignore runtime disconnected errors
-  }
-}
-
-/**
- * Toggles scanner on/off.
- */
-async function toggleScanning() {
-  if (isScanning) {
-    return stopScanning();
-  } else {
-    return await startScanning();
-  }
-}
-
-// Runtime message listener (from popup or background)
+// Runtime message listener from background
 if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.onMessage) {
   browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || !message.type) return;
 
     switch (message.type) {
-      case 'START_SCAN':
-        startScanning().then(sendResponse);
-        return true; // Keep channel open for async response
-
-      case 'STOP_SCAN':
-        sendResponse(stopScanning());
+      case 'PING': {
+        sendResponse({ pong: true });
         return false;
+      }
 
-      case 'TOGGLE_SCAN':
-        toggleScanning().then(sendResponse);
+      case 'SCANNER_STARTED': {
+        initOverlay().then(() => sendResponse({ success: true }));
         return true;
+      }
 
-      case 'GET_STATUS':
-        sendResponse({ active: isScanning });
+      case 'SCANNER_STOPPED': {
+        teardownOverlay();
+        sendResponse({ success: true });
         return false;
+      }
 
-      case 'SETTINGS_UPDATED':
-        if (message.settings) {
-          if (scanner && message.settings.scanRate) {
-            scanner.setFps(message.settings.scanRate);
+      case 'QR_DETECTED': {
+        if (!overlay) {
+          initOverlay().then((ov) => {
+            const scaleX = window.innerWidth / message.scanWidth;
+            const scaleY = window.innerHeight / message.scanHeight;
+            ov.update(message.qrResult, scaleX, scaleY);
+          });
+        } else {
+          const scaleX = window.innerWidth / message.scanWidth;
+          const scaleY = window.innerHeight / message.scanHeight;
+          overlay.update(message.qrResult, scaleX, scaleY);
+        }
+        sendResponse({ received: true });
+        return false;
+      }
+
+      case 'QR_NOT_FOUND': {
+        if (overlay) {
+          overlay.update(null);
+        }
+        sendResponse({ received: true });
+        return false;
+      }
+
+      case 'SETTINGS_UPDATED': {
+        if (overlay && message.settings) {
+          if (message.settings.soundEnabled !== undefined) {
+            overlay.options.soundEnabled = message.settings.soundEnabled;
           }
-          if (overlay) {
-            if (message.settings.soundEnabled !== undefined) {
-              overlay.options.soundEnabled = message.settings.soundEnabled;
-            }
-            if (message.settings.autoCopy !== undefined) {
-              overlay.options.autoCopy = message.settings.autoCopy;
-            }
+          if (message.settings.autoCopy !== undefined) {
+            overlay.options.autoCopy = message.settings.autoCopy;
           }
         }
         sendResponse({ success: true });
         return false;
+      }
     }
   });
 }
 
-// Keyboard shortcut fallback inside page (Alt+Shift+Q or Alt+Q)
+// Fallback in-page shortcut (Alt+Q)
 window.addEventListener('keydown', (e) => {
   if (e.altKey && (e.key === 'q' || e.key === 'й' || e.key === 'Q' || e.key === 'Й')) {
     e.preventDefault();
-    toggleScanning();
+    try {
+      browser.runtime.sendMessage({ type: 'TOGGLE_SCAN' }).catch(() => {});
+    } catch {}
   }
 });

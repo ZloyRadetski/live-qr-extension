@@ -36,11 +36,23 @@ async function build() {
     minify: false
   });
 
-  // 3. Copy Overlay CSS to dist
+  // 3. Bundle Background Script
+  console.log('[Build] Bundling background script...');
+  await esbuild.build({
+    entryPoints: ['src/background/background.js'],
+    bundle: true,
+    outfile: 'dist/background.bundle.js',
+    format: 'iife',
+    target: ['firefox109'],
+    sourcemap: false,
+    minify: false
+  });
+
+  // 4. Copy Overlay CSS to dist
   console.log('[Build] Copying overlay CSS...');
   fs.copyFileSync('src/content/overlay.css', 'dist/overlay.css');
 
-  // 4. Bundle Test Bench
+  // 5. Bundle Test Bench
   console.log('[Build] Bundling test bench...');
   await esbuild.build({
     entryPoints: ['test/test-bench.js'],
