@@ -4,8 +4,7 @@
  * at full native resolution, bypassing screen downsampling and JPEG compression.
  */
 
-import jsQR from 'jsqr';
-import { maskQrRegion } from './coordinates.js';
+import { readBarcodes } from 'zxing-wasm/reader';
 
 let offscreenCanvas = null;
 let offscreenCtx = null;
@@ -79,7 +78,7 @@ export function isElementInViewport(el, margin = 50) {
  * @param {number} [maxDimension=1200]
  * @returns {Array<{ data: string, location: any, rect: DOMRect, element: HTMLElement }>}
  */
-export function scanMediaElement(el, maxDimension = 1200) {
+export async function scanMediaElement(el, maxDimension = 1200) {
   if (!el) return [];
 
   let width = 0;
@@ -142,7 +141,7 @@ export function scanMediaElement(el, maxDimension = 1200) {
     width = el.videoWidth;
     height = el.videoHeight;
 
-    // Per-frame cache: skip jsQR if video frame hasn't advanced since last scan
+    // Per-frame cache: skip decode if video frame hasn't advanced since last scan
     // currentTime is a float in seconds; changes every rendered frame
     const currentTime = el.currentTime;
     if (el._qrRadarVideoTime === currentTime && el._qrRadarCached !== undefined) {
@@ -172,7 +171,7 @@ export function scanMediaElement(el, maxDimension = 1200) {
 
   // Scale down for optimal speed/accuracy balance
   // IMG: cap at maxDimension (1200px default)
-  // VIDEO: cap at 720px — high-res not needed, jsQR works well at moderate resolution
+  // VIDEO: cap at 720px — high-res not needed, decoder works well at moderate resolution
   const effectiveMax = el.tagName === 'VIDEO' ? Math.min(maxDimension, 720) : maxDimension;
   let scanW = width;
   let scanH = height;
@@ -231,51 +230,49 @@ export function scanMediaElement(el, maxDimension = 1200) {
     }
 
     const found = [];
-    const maxPerElement = 4;
-    let count = 0;
+    try {
+      const results = await readBarcodes(
+        { data: imgData.data, width: scanW, height: scanH },
+        { formats: ['QRCode'], maxNumberOfSymbols: 4, tryHarder: false }
+      );
 
-    while (count < maxPerElement) {
-      // For VIDEO: skip inverted attempts (rare for video content, saves ~50% jsQR time)
-      const inversion = el.tagName === 'VIDEO' ? 'dontInvert' : 'attemptBoth';
-      const code = jsQR(imgData.data, scanW, scanH, { inversionAttempts: inversion });
-      if (!code) break;
+      if (Array.isArray(results) && results.length > 0) {
+        const rect = el.getBoundingClientRect();
+        const scaleX = rect.width / scanW;
+        const scaleY = rect.height / scanH;
 
-      const rect = el.getBoundingClientRect();
-      const scaleX = rect.width / scanW;
-      const scaleY = rect.height / scanH;
+        for (const code of results) {
+          if (!code.text || !code.position) continue;
+          const location = {
+            topLeftCorner: {
+              x: rect.left + code.position.topLeft.x * scaleX,
+              y: rect.top + code.position.topLeft.y * scaleY
+            },
+            topRightCorner: {
+              x: rect.left + code.position.topRight.x * scaleX,
+              y: rect.top + code.position.topRight.y * scaleY
+            },
+            bottomRightCorner: {
+              x: rect.left + code.position.bottomRight.x * scaleX,
+              y: rect.top + code.position.bottomRight.y * scaleY
+            },
+            bottomLeftCorner: {
+              x: rect.left + code.position.bottomLeft.x * scaleX,
+              y: rect.top + code.position.bottomLeft.y * scaleY
+            }
+          };
 
-      // Project location points to absolute viewport coordinates
-      const location = {
-        topLeftCorner: {
-          x: rect.left + code.location.topLeftCorner.x * scaleX,
-          y: rect.top + code.location.topLeftCorner.y * scaleY
-        },
-        topRightCorner: {
-          x: rect.left + code.location.topRightCorner.x * scaleX,
-          y: rect.top + code.location.topRightCorner.y * scaleY
-        },
-        bottomRightCorner: {
-          x: rect.left + code.location.bottomRightCorner.x * scaleX,
-          y: rect.top + code.location.bottomRightCorner.y * scaleY
-        },
-        bottomLeftCorner: {
-          x: rect.left + code.location.bottomLeftCorner.x * scaleX,
-          y: rect.top + code.location.bottomLeftCorner.y * scaleY
+          found.push({
+            data: code.text,
+            location,
+            rect,
+            element: el,
+            isDom: true
+          });
         }
-      };
-
-      found.push({
-        data: code.data,
-        location,
-        rect,
-        element: el,
-        isDom: true
-      });
-
-      count++;
-      // Mask this QR region on the offscreen canvas to detect any additional QRs
-      maskQrRegion(ctx, code.location);
-      imgData = ctx.getImageData(0, 0, scanW, scanH);
+      }
+    } catch (err) {
+      console.warn('[QR Radar] scanMediaElement decode error:', err);
     }
 
     if (el.tagName === 'IMG' || el.tagName === 'VIDEO' || el.tagName === 'CANVAS') {
@@ -311,9 +308,9 @@ export function scanMediaElement(el, maxDimension = 1200) {
 
 /**
  * Scans all visible <img>, <canvas>, and <video> tags on the page.
- * @returns {Array<{ data: string, location: any, rect: DOMRect, element: HTMLElement, isDom: boolean }>}
+ * @returns {Promise<Array<{ data: string, location: any, rect: DOMRect, element: HTMLElement, isDom: boolean }>>}
  */
-export function scanVisibleDomImages() {
+export async function scanVisibleDomImages() {
   if (typeof document === 'undefined') return [];
 
   const elements = Array.from(document.querySelectorAll('img, canvas, video'));
@@ -321,7 +318,7 @@ export function scanVisibleDomImages() {
 
   for (const el of elements) {
     if (isElementInViewport(el)) {
-      const results = scanMediaElement(el);
+      const results = await scanMediaElement(el);
       if (Array.isArray(results) && results.length > 0) {
         allResults.push(...results);
       }

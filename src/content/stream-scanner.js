@@ -4,7 +4,7 @@
  * and feeds image data to jsQR.
  */
 
-import jsQR from 'jsqr';
+import { readBarcodes } from 'zxing-wasm/reader';
 
 export class StreamScanner {
   /**
@@ -139,15 +139,25 @@ export class StreamScanner {
     // Extract raw pixels
     const imageData = this.ctx.getImageData(0, 0, scanW, scanH);
 
-    // Call jsQR
-    const decoder = jsQR || (typeof window !== 'undefined' ? window.jsQR : null);
+    // Decode with zxing-wasm
     let qrResult = null;
-
-    if (decoder) {
-      qrResult = decoder(imageData.data, scanW, scanH, {
-        inversionAttempts: 'dontInvert'
-      });
-    }
+    try {
+      const results = await readBarcodes(
+        { data: imageData.data, width: scanW, height: scanH },
+        { formats: ['QRCode'], maxNumberOfSymbols: 1 }
+      );
+      if (results && results.length > 0 && results[0].text && results[0].position) {
+        qrResult = {
+          data: results[0].text,
+          location: {
+            topLeftCorner: results[0].position.topLeft,
+            topRightCorner: results[0].position.topRight,
+            bottomRightCorner: results[0].position.bottomRight,
+            bottomLeftCorner: results[0].position.bottomLeft
+          }
+        };
+      }
+    } catch {}
 
     // Calculate scale factors from scan canvas to browser viewport
     const scaleX = window.innerWidth / scanW;

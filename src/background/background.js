@@ -7,11 +7,9 @@
  * - Zero-copy frame transfer: Uint8ClampedArray transferred to Worker without memory copy.
  */
 
-import jsQR from 'jsqr';
 import { readBarcodes } from 'zxing-wasm/reader';
 import { getSettings, saveSettings, addScanHistory, isDomainBlacklisted } from '../utils/storage.js';
 import { classifyContent } from '../utils/parser.js';
-import { maskQrRegionInBuffer } from '../utils/coordinates.js';
 
 let isGlobalActive = false;
 let isLoopRunning = false;
@@ -66,7 +64,7 @@ function getCropCanvas() {
 }
 
 // ─── Decoder Web Worker ───────────────────────────────────────────────────────
-// jsQR runs entirely in a Worker: 0 ms main-thread blocking per frame.
+// WebAssembly decoder runs entirely in a Worker: 0 ms main-thread blocking per frame.
 
 let decoderWorker = null;
 let workerMsgId = 0;
@@ -105,7 +103,7 @@ function getDecoderWorker() {
 /**
  * Sends a pixel buffer to the decoder Worker and returns detected QRs.
  * The ArrayBuffer is transferred (zero-copy) to the Worker.
- * Falls back to running zxing-wasm/jsQR in background page if Worker is unavailable.
+ * Falls back to running zxing-wasm in background page if Worker is unavailable.
  * @param {ArrayBuffer} buffer - RGBA pixel data
  * @param {number} width
  * @param {number} height
@@ -123,7 +121,7 @@ async function decodeWithWorker(buffer, width, height, maxQRs = 4) {
     });
   }
 
-  // Fallback: run zxing-wasm (with jsQR fallback) synchronously in background page.
+  // Fallback: run zxing-wasm synchronously in background page.
   try {
     const results = await readBarcodes(
       { data: new Uint8ClampedArray(buffer), width, height },
@@ -140,20 +138,7 @@ async function decodeWithWorker(buffer, width, height, maxQRs = 4) {
         }
       }));
     }
-  } catch {
-    const pixels = new Uint8ClampedArray(buffer);
-    const imageData = { data: pixels, width, height };
-    const qrs = [];
-    let count = 0;
-    while (count < maxQRs) {
-      let code = jsQR(pixels, width, height, { inversionAttempts: 'dontInvert' });
-      if (!code) break;
-      qrs.push({ data: code.data, location: code.location });
-      count++;
-      maskQrRegionInBuffer(imageData, code.location);
-    }
-    return qrs;
-  }
+  } catch {}
   return [];
 }
 

@@ -142,7 +142,7 @@ This add-on uses \`esbuild\` to bundle modern ES modules into browser-compatible
 
 ## Steps to Reproduce the Build
 1. Extract this source archive into an empty directory.
-2. Run \`npm install\` to install the dependencies (\`esbuild\`, \`zxing-wasm\`, \`jsqr\`, \`qrcode\`).
+2. Run \`npm install\` to install the dependencies (\`esbuild\`, \`zxing-wasm\`, \`qrcode\`).
 3. Run \`npm run build\` (or \`node build.js\`).
 4. The output bundles and WebAssembly binaries will be generated in \`dist/\`:
    - \`dist/background.bundle.js\`

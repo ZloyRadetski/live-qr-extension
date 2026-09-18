@@ -95,7 +95,7 @@ async function triggerDomScan() {
   // Report any visible video player viewports to background service
   reportVisibleVideoRects();
 
-  const results = scanVisibleDomImages();
+  const results = await scanVisibleDomImages();
   if (Array.isArray(results)) {
     if (results.length > 0) {
       if (!overlay) {

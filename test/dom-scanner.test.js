@@ -65,31 +65,31 @@ test('isElementInViewport accurately detects visible vs hidden elements', () => 
   assert.equal(isElementInViewport(opacityZeroEl), false);
 });
 
-test('scanMediaElement safely rejects invalid, incomplete, or tiny images', () => {
+test('scanMediaElement safely rejects invalid, incomplete, or tiny images', async () => {
   // Incomplete image
-  assert.deepEqual(scanMediaElement({ tagName: 'IMG', complete: false }), []);
+  assert.deepEqual(await scanMediaElement({ tagName: 'IMG', complete: false }), []);
 
   // Tiny image (< 20px)
-  assert.deepEqual(scanMediaElement({ tagName: 'IMG', complete: true, naturalWidth: 10, naturalHeight: 10 }), []);
+  assert.deepEqual(await scanMediaElement({ tagName: 'IMG', complete: true, naturalWidth: 10, naturalHeight: 10 }), []);
 
   // Non-media tag
-  assert.deepEqual(scanMediaElement({ tagName: 'DIV' }), []);
+  assert.deepEqual(await scanMediaElement({ tagName: 'DIV' }), []);
 
   // Video tag: not ready (readyState 0 or 1)
-  assert.deepEqual(scanMediaElement({ tagName: 'VIDEO', readyState: 0, videoWidth: 640, videoHeight: 480 }), []);
-  assert.deepEqual(scanMediaElement({ tagName: 'VIDEO', readyState: 1, videoWidth: 640, videoHeight: 480 }), []);
+  assert.deepEqual(await scanMediaElement({ tagName: 'VIDEO', readyState: 0, videoWidth: 640, videoHeight: 480 }), []);
+  assert.deepEqual(await scanMediaElement({ tagName: 'VIDEO', readyState: 1, videoWidth: 640, videoHeight: 480 }), []);
 
   // Video tag: ready but 0 dimensions or tiny
-  assert.deepEqual(scanMediaElement({ tagName: 'VIDEO', readyState: 2, videoWidth: 0, videoHeight: 0 }), []);
-  assert.deepEqual(scanMediaElement({ tagName: 'VIDEO', readyState: 4, videoWidth: 10, videoHeight: 10 }), []);
+  assert.deepEqual(await scanMediaElement({ tagName: 'VIDEO', readyState: 2, videoWidth: 0, videoHeight: 0 }), []);
+  assert.deepEqual(await scanMediaElement({ tagName: 'VIDEO', readyState: 4, videoWidth: 10, videoHeight: 10 }), []);
 });
 
-test('scanVisibleDomImages safely returns empty array in non-browser environment', () => {
-  const res = scanVisibleDomImages();
+test('scanVisibleDomImages safely returns empty array in non-browser environment', async () => {
+  const res = await scanVisibleDomImages();
   assert.deepEqual(res, []);
 });
 
-test('scanMediaElement skips tainted cross-origin elements immediately', () => {
+test('scanMediaElement skips tainted cross-origin elements immediately', async () => {
   const taintedVideo = {
     tagName: 'VIDEO',
     _qrRadarTainted: true,
@@ -111,9 +111,9 @@ test('scanMediaElement skips tainted cross-origin elements immediately', () => {
     height: 500
   };
 
-  assert.deepEqual(scanMediaElement(taintedVideo), []);
-  assert.deepEqual(scanMediaElement(taintedImg), []);
-  assert.deepEqual(scanMediaElement(taintedCanvas), []);
+  assert.deepEqual(await scanMediaElement(taintedVideo), []);
+  assert.deepEqual(await scanMediaElement(taintedImg), []);
+  assert.deepEqual(await scanMediaElement(taintedCanvas), []);
 });
 
 test('getVisibleVideoRects safely returns empty array in non-browser environment', () => {
