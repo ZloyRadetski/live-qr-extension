@@ -7,8 +7,10 @@
  * - Zero-copy frame transfer: Uint8ClampedArray transferred to Worker without memory copy.
  */
 
+import jsQR from 'jsqr';
 import { getSettings, saveSettings, addScanHistory, isDomainBlacklisted } from '../utils/storage.js';
 import { classifyContent } from '../utils/parser.js';
+import { maskQrRegionInBuffer } from '../utils/coordinates.js';
 
 let isGlobalActive = false;
 let isLoopRunning = false;
@@ -97,7 +99,8 @@ function getDecoderWorker() {
 /**
  * Sends a pixel buffer to the decoder Worker and returns detected QRs.
  * The ArrayBuffer is transferred (zero-copy) to the Worker.
- * Falls back to empty array if Worker is unavailable (test environment).
+ * Falls back to running jsQR synchronously in the background page if Worker
+ * is unavailable (e.g. bundle not yet built, or first-launch before rebuild).
  * @param {ArrayBuffer} buffer - RGBA pixel data
  * @param {number} width
  * @param {number} height
@@ -106,13 +109,30 @@ function getDecoderWorker() {
  */
 function decodeWithWorker(buffer, width, height, maxQRs = 4) {
   const worker = getDecoderWorker();
-  if (!worker) return Promise.resolve([]);
-  return new Promise((resolve) => {
-    const id = ++workerMsgId;
-    workerPending.set(id, resolve);
-    // Transfer buffer ownership to Worker — no memory copy
-    worker.postMessage({ id, buffer, width, height, maxQRs }, [buffer]);
-  });
+  if (worker) {
+    return new Promise((resolve) => {
+      const id = ++workerMsgId;
+      workerPending.set(id, resolve);
+      // Transfer buffer ownership to Worker — no memory copy
+      worker.postMessage({ id, buffer, width, height, maxQRs }, [buffer]);
+    });
+  }
+
+  // Fallback: run jsQR synchronously in background page.
+  // Slower (blocks event loop briefly) but ensures detection works without Worker.
+  const pixels = new Uint8ClampedArray(buffer);
+  const imageData = { data: pixels, width, height };
+  const qrs = [];
+  let count = 0;
+  while (count < maxQRs) {
+    let code = jsQR(pixels, width, height, { inversionAttempts: 'dontInvert' });
+    if (!code) code = jsQR(pixels, width, height, { inversionAttempts: 'onlyInvert' });
+    if (!code) break;
+    qrs.push({ data: code.data, location: code.location });
+    count++;
+    maskQrRegionInBuffer(imageData, code.location);
+  }
+  return Promise.resolve(qrs);
 }
 
 /**

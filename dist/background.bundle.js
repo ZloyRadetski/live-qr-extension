@@ -10272,20 +10272,45 @@
   }
 
   // src/utils/coordinates.js
-  function maskQrRegion(ctx2, location, margin = 4, fillColor = "#ffffff") {
-    if (!ctx2 || !location) return;
+  function maskQrRegionInBuffer(imageData, location, margin = 4) {
+    if (!imageData || !location) return;
     const { topLeftCorner: tl, topRightCorner: tr, bottomRightCorner: br, bottomLeftCorner: bl } = location;
     if (!tl || !tr || !br || !bl) return;
-    ctx2.save();
-    ctx2.fillStyle = fillColor;
-    ctx2.beginPath();
-    ctx2.moveTo(tl.x - margin, tl.y - margin);
-    ctx2.lineTo(tr.x + margin, tr.y - margin);
-    ctx2.lineTo(br.x + margin, br.y + margin);
-    ctx2.lineTo(bl.x - margin, bl.y + margin);
-    ctx2.closePath();
-    ctx2.fill();
-    ctx2.restore();
+    const w = imageData.width;
+    const h = imageData.height;
+    const data = imageData.data;
+    const pts = [
+      { x: tl.x - margin, y: tl.y - margin },
+      { x: tr.x + margin, y: tr.y - margin },
+      { x: br.x + margin, y: br.y + margin },
+      { x: bl.x - margin, y: bl.y + margin }
+    ];
+    let minY = Math.max(0, Math.floor(Math.min(pts[0].y, pts[1].y, pts[2].y, pts[3].y)));
+    let maxY = Math.min(h - 1, Math.ceil(Math.max(pts[0].y, pts[1].y, pts[2].y, pts[3].y)));
+    const n = pts.length;
+    for (let y = minY; y <= maxY; y++) {
+      const xIntersections = [];
+      for (let i = 0; i < n; i++) {
+        const a = pts[i];
+        const b = pts[(i + 1) % n];
+        if (a.y <= y && b.y > y || b.y <= y && a.y > y) {
+          const t = (y - a.y) / (b.y - a.y);
+          xIntersections.push(a.x + t * (b.x - a.x));
+        }
+      }
+      if (xIntersections.length < 2) continue;
+      xIntersections.sort((a, b) => a - b);
+      const xStart = Math.max(0, Math.floor(xIntersections[0]));
+      const xEnd = Math.min(w - 1, Math.ceil(xIntersections[xIntersections.length - 1]));
+      const rowBase = y * w * 4;
+      for (let x = xStart; x <= xEnd; x++) {
+        const idx = rowBase + x * 4;
+        data[idx] = 255;
+        data[idx + 1] = 255;
+        data[idx + 2] = 255;
+        data[idx + 3] = 255;
+      }
+    }
   }
 
   // src/background/background.js
@@ -10297,6 +10322,7 @@
   var loopTimer = null;
   var cachedSettings = null;
   var currentActiveTab = null;
+  var lastFrameHash = 0;
   var reportedQrDataThisSession = /* @__PURE__ */ new Set();
   var lastQrDataSnapshot = "";
   async function getCachedSettings() {
@@ -10314,16 +10340,14 @@
   }
   var canvas = null;
   var ctx = null;
-  var cachedImg = null;
   var cropCanvas = null;
   var cropCtx = null;
   function getCanvas() {
     if (!canvas && typeof document !== "undefined") {
       canvas = document.createElement("canvas");
       ctx = canvas.getContext("2d", { willReadFrequently: true });
-      cachedImg = new Image();
     }
-    return { canvas, ctx, cachedImg };
+    return { canvas, ctx };
   }
   function getCropCanvas() {
     if (!cropCanvas && typeof document !== "undefined") {
@@ -10332,8 +10356,77 @@
     }
     return { cropCanvas, cropCtx };
   }
+  var decoderWorker = null;
+  var workerMsgId = 0;
+  var workerPending = /* @__PURE__ */ new Map();
+  function getDecoderWorker() {
+    if (decoderWorker) return decoderWorker;
+    if (typeof browser === "undefined" || !browser.runtime) return null;
+    try {
+      decoderWorker = new Worker(browser.runtime.getURL("dist/decoder.worker.bundle.js"));
+      decoderWorker.onmessage = ({ data }) => {
+        const resolve = workerPending.get(data.id);
+        if (resolve) {
+          workerPending.delete(data.id);
+          resolve(data.qrs);
+        }
+      };
+      decoderWorker.onerror = (err) => {
+        console.error("[QR Radar] Decoder Worker error:", err);
+      };
+    } catch {
+      decoderWorker = null;
+    }
+    return decoderWorker;
+  }
+  function decodeWithWorker(buffer, width, height, maxQRs = 4) {
+    const worker = getDecoderWorker();
+    if (worker) {
+      return new Promise((resolve) => {
+        const id = ++workerMsgId;
+        workerPending.set(id, resolve);
+        worker.postMessage({ id, buffer, width, height, maxQRs }, [buffer]);
+      });
+    }
+    const pixels = new Uint8ClampedArray(buffer);
+    const imageData = { data: pixels, width, height };
+    const qrs = [];
+    let count = 0;
+    while (count < maxQRs) {
+      let code = (0, import_jsqr.default)(pixels, width, height, { inversionAttempts: "dontInvert" });
+      if (!code) code = (0, import_jsqr.default)(pixels, width, height, { inversionAttempts: "onlyInvert" });
+      if (!code) break;
+      qrs.push({ data: code.data, location: code.location });
+      count++;
+      maskQrRegionInBuffer(imageData, code.location);
+    }
+    return Promise.resolve(qrs);
+  }
+  function dataUrlToBlob(dataUrl) {
+    const comma = dataUrl.indexOf(",");
+    const mimeMatch = dataUrl.slice(0, comma).match(/:(.*?);/);
+    const mime = mimeMatch ? mimeMatch[1] : "image/jpeg";
+    const base64 = dataUrl.slice(comma + 1);
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return new Blob([bytes], { type: mime });
+  }
   var tabVideoRects = /* @__PURE__ */ new Map();
-  function decodeVideoCrops(img, videoInfo) {
+  function computeFrameHash(dataUrl) {
+    const len = dataUrl.length;
+    if (len === 0) return 0;
+    const step = Math.max(1, Math.floor(len / 256));
+    let hash = 2166136261;
+    for (let i = 0; i < len; i += step) {
+      hash ^= dataUrl.charCodeAt(i);
+      hash = hash * 16777619 >>> 0;
+    }
+    return hash;
+  }
+  async function decodeVideoCrops(img, videoInfo) {
     if (!videoInfo || !videoInfo.rects || videoInfo.rects.length === 0) return null;
     const { cropCanvas: cCanvas, cropCtx: cCtx } = getCropCanvas();
     if (!cCanvas || !cCtx) return null;
@@ -10369,19 +10462,14 @@
         cCanvas.height = drawH;
       }
       cCtx.drawImage(img, srcX, srcY, srcW, srcH, 0, 0, drawW, drawH);
-      let imgData = cCtx.getImageData(0, 0, drawW, drawH);
-      let count = 0;
+      const imgData = cCtx.getImageData(0, 0, drawW, drawH);
       const scaleBackX = srcW / drawW;
       const scaleBackY = srcH / drawH;
-      while (count < 3) {
-        let code = (0, import_jsqr.default)(imgData.data, drawW, drawH, { inversionAttempts: "dontInvert" });
-        if (!code) {
-          code = (0, import_jsqr.default)(imgData.data, drawW, drawH, { inversionAttempts: "onlyInvert" });
-        }
-        if (!code) break;
-        const loc = code.location;
+      const cropQrs = await decodeWithWorker(imgData.data.buffer, drawW, drawH, 3);
+      for (const qr of cropQrs) {
+        const loc = qr.location;
         qrs.push({
-          data: code.data,
+          data: qr.data,
           location: {
             topLeftCorner: { x: (srcX + loc.topLeftCorner.x * scaleBackX) / dpr, y: (srcY + loc.topLeftCorner.y * scaleBackY) / dpr },
             topRightCorner: { x: (srcX + loc.topRightCorner.x * scaleBackX) / dpr, y: (srcY + loc.topRightCorner.y * scaleBackY) / dpr },
@@ -10389,9 +10477,6 @@
             bottomLeftCorner: { x: (srcX + loc.bottomLeftCorner.x * scaleBackX) / dpr, y: (srcY + loc.bottomLeftCorner.y * scaleBackY) / dpr }
           }
         });
-        count++;
-        maskQrRegion(cCtx, loc);
-        imgData = cCtx.getImageData(0, 0, drawW, drawH);
       }
     }
     if (qrs.length > 0) {
@@ -10402,54 +10487,44 @@
     return null;
   }
   async function decodeDataUrl(dataUrl, maxW = 720, videoInfo = null) {
-    const { canvas: canvas2, ctx: ctx2, cachedImg: cachedImg2 } = getCanvas();
-    if (!canvas2 || !ctx2 || !cachedImg2) return null;
-    return new Promise((resolve) => {
-      cachedImg2.onload = () => {
-        const hasVideos = videoInfo && videoInfo.rects && videoInfo.rects.length > 0;
-        if (hasVideos) {
-          const videoResult = decodeVideoCrops(cachedImg2, videoInfo);
-          if (videoResult && videoResult.qrs && videoResult.qrs.length > 0) {
-            resolve(videoResult);
-            return;
-          }
+    const { canvas: canvas2, ctx: ctx2 } = getCanvas();
+    if (!canvas2 || !ctx2) return null;
+    let bitmap;
+    try {
+      const blob = dataUrlToBlob(dataUrl);
+      bitmap = await createImageBitmap(blob);
+    } catch {
+      return null;
+    }
+    try {
+      const hasVideos = videoInfo && videoInfo.rects && videoInfo.rects.length > 0;
+      if (hasVideos) {
+        const videoResult = await decodeVideoCrops(bitmap, videoInfo);
+        if (videoResult && videoResult.qrs && videoResult.qrs.length > 0) {
+          return videoResult;
         }
-        if (hasVideos) {
-          resolve(null);
-          return;
-        }
-        let w = cachedImg2.width;
-        let h = cachedImg2.height;
-        if (w > maxW) {
-          const ratio = maxW / w;
-          w = Math.round(w * ratio);
-          h = Math.round(h * ratio);
-        }
-        if (canvas2.width !== w || canvas2.height !== h) {
-          canvas2.width = w;
-          canvas2.height = h;
-        }
-        ctx2.drawImage(cachedImg2, 0, 0, w, h);
-        let imgData = ctx2.getImageData(0, 0, w, h);
-        const qrs = [];
-        const maxQRs = 4;
-        let count = 0;
-        while (count < maxQRs) {
-          let code = (0, import_jsqr.default)(imgData.data, w, h, { inversionAttempts: "dontInvert" });
-          if (!code) {
-            code = (0, import_jsqr.default)(imgData.data, w, h, { inversionAttempts: "onlyInvert" });
-          }
-          if (!code) break;
-          qrs.push(code);
-          count++;
-          maskQrRegion(ctx2, code.location);
-          imgData = ctx2.getImageData(0, 0, w, h);
-        }
-        resolve({ qrs, qr: qrs[0] || null, scanWidth: w, scanHeight: h });
-      };
-      cachedImg2.onerror = () => resolve(null);
-      cachedImg2.src = dataUrl;
-    });
+      }
+      if (hasVideos) {
+        return null;
+      }
+      let w = bitmap.width;
+      let h = bitmap.height;
+      if (w > maxW) {
+        const ratio = maxW / w;
+        w = Math.round(w * ratio);
+        h = Math.round(h * ratio);
+      }
+      if (canvas2.width !== w || canvas2.height !== h) {
+        canvas2.width = w;
+        canvas2.height = h;
+      }
+      ctx2.drawImage(bitmap, 0, 0, w, h);
+      const imgData = ctx2.getImageData(0, 0, w, h);
+      const qrs = await decodeWithWorker(imgData.data.buffer, w, h);
+      return { qrs, qr: qrs[0] || null, scanWidth: w, scanHeight: h };
+    } finally {
+      bitmap.close();
+    }
   }
   async function ensureInjected(tabId) {
     try {
@@ -10492,13 +10567,13 @@
           return;
         }
         const resolution = settings.scanResolution || "720";
-        let maxW = 720;
+        let maxW = 960;
         let quality = 75;
         if (resolution === "720") {
-          maxW = 540;
-          quality = 70;
+          maxW = 720;
+          quality = 72;
         } else if (resolution === "1440") {
-          maxW = 1080;
+          maxW = 1280;
           quality = 82;
         }
         const dataUrl = await browser.tabs.captureVisibleTab(tab.windowId, {
@@ -10506,6 +10581,13 @@
           quality
         });
         if (dataUrl && isGlobalActive && !isTabScrolling) {
+          const frameHash = computeFrameHash(dataUrl);
+          if (hasActiveQR && frameHash === lastFrameHash) {
+            const userFps = Math.max(1, Math.min(120, Number(settings.scanRate) || 2));
+            loopTimer = setTimeout(globalCaptureLoop, Math.round(1e3 / userFps));
+            return;
+          }
+          lastFrameHash = frameHash;
           const videoInfo = tabVideoRects.get(tab.id) || null;
           const decoded = await decodeDataUrl(dataUrl, maxW, videoInfo);
           if (decoded && decoded.qrs && decoded.qrs.length > 0) {
