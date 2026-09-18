@@ -3,6 +3,29 @@ import assert from 'node:assert/strict';
 import QRCode from 'qrcode';
 import jsQR from 'jsqr';
 import { PNG } from 'pngjs';
+import { readBarcodes } from 'zxing-wasm/reader';
+
+test('zxing-wasm WebAssembly decoder accurately decodes rendered QR code image buffer', async () => {
+  const secretPayload = 'https://github.com/ZloyRadetski/live-qr-extension/scanner-verify-token-9988';
+
+  const pngBuffer = await QRCode.toBuffer(secretPayload, {
+    width: 250,
+    margin: 4,
+    color: { dark: '#000000', light: '#ffffff' }
+  });
+
+  const png = PNG.sync.read(pngBuffer);
+  const results = await readBarcodes(
+    { data: new Uint8ClampedArray(png.data), width: png.width, height: png.height },
+    { formats: ['QRCode'] }
+  );
+
+  assert.equal(results.length, 1, 'zxing-wasm should return 1 result');
+  assert.equal(results[0].text, secretPayload);
+  assert.ok(results[0].position, 'zxing-wasm should provide position coordinates');
+  assert.ok(results[0].position.topLeft.x >= 0);
+  assert.ok(results[0].position.topRight.x > results[0].position.topLeft.x);
+});
 
 test('jsQR accurately decodes rendered QR code image buffer', async () => {
   const secretPayload = 'https://github.com/ZloyRadetski/live-qr-extension/scanner-verify-token-9988';

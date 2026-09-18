@@ -8,6 +8,7 @@
  */
 
 import jsQR from 'jsqr';
+import { readBarcodes } from 'zxing-wasm/reader';
 import { getSettings, saveSettings, addScanHistory, isDomainBlacklisted } from '../utils/storage.js';
 import { classifyContent } from '../utils/parser.js';
 import { maskQrRegionInBuffer } from '../utils/coordinates.js';
@@ -21,6 +22,7 @@ let loopTimer = null;
 let cachedSettings = null;
 let currentActiveTab = null;
 let lastFrameHash = 0;
+let unchangedEmptyFrames = 0;
 
 // Track QR data already saved to history to avoid repeated writes on every frame
 const reportedQrDataThisSession = new Set();
@@ -80,7 +82,11 @@ function getDecoderWorker() {
   if (typeof browser === 'undefined' || !browser.runtime) return null;
   try {
     decoderWorker = new Worker(browser.runtime.getURL('dist/decoder.worker.bundle.js'));
+    const wasmUrl = browser.runtime.getURL('dist/zxing_reader.wasm');
+    decoderWorker.postMessage({ type: 'INIT', wasmUrl });
+
     decoderWorker.onmessage = ({ data }) => {
+      if (!data || data.type === 'INIT') return;
       const resolve = workerPending.get(data.id);
       if (resolve) {
         workerPending.delete(data.id);
@@ -99,15 +105,14 @@ function getDecoderWorker() {
 /**
  * Sends a pixel buffer to the decoder Worker and returns detected QRs.
  * The ArrayBuffer is transferred (zero-copy) to the Worker.
- * Falls back to running jsQR synchronously in the background page if Worker
- * is unavailable (e.g. bundle not yet built, or first-launch before rebuild).
+ * Falls back to running zxing-wasm/jsQR in background page if Worker is unavailable.
  * @param {ArrayBuffer} buffer - RGBA pixel data
  * @param {number} width
  * @param {number} height
  * @param {number} [maxQRs=4]
  * @returns {Promise<Array<{ data: string, location: any }>>}
  */
-function decodeWithWorker(buffer, width, height, maxQRs = 4) {
+async function decodeWithWorker(buffer, width, height, maxQRs = 4) {
   const worker = getDecoderWorker();
   if (worker) {
     return new Promise((resolve) => {
@@ -118,21 +123,38 @@ function decodeWithWorker(buffer, width, height, maxQRs = 4) {
     });
   }
 
-  // Fallback: run jsQR synchronously in background page.
-  // Slower (blocks event loop briefly) but ensures detection works without Worker.
-  const pixels = new Uint8ClampedArray(buffer);
-  const imageData = { data: pixels, width, height };
-  const qrs = [];
-  let count = 0;
-  while (count < maxQRs) {
-    let code = jsQR(pixels, width, height, { inversionAttempts: 'dontInvert' });
-    if (!code) code = jsQR(pixels, width, height, { inversionAttempts: 'onlyInvert' });
-    if (!code) break;
-    qrs.push({ data: code.data, location: code.location });
-    count++;
-    maskQrRegionInBuffer(imageData, code.location);
+  // Fallback: run zxing-wasm (with jsQR fallback) synchronously in background page.
+  try {
+    const results = await readBarcodes(
+      { data: new Uint8ClampedArray(buffer), width, height },
+      { formats: ['QRCode'], maxNumberOfSymbols: maxQRs, tryHarder: false }
+    );
+    if (Array.isArray(results) && results.length > 0) {
+      return results.map((r) => ({
+        data: r.text,
+        location: {
+          topLeftCorner: { x: r.position.topLeft.x, y: r.position.topLeft.y },
+          topRightCorner: { x: r.position.topRight.x, y: r.position.topRight.y },
+          bottomRightCorner: { x: r.position.bottomRight.x, y: r.position.bottomRight.y },
+          bottomLeftCorner: { x: r.position.bottomLeft.x, y: r.position.bottomLeft.y }
+        }
+      }));
+    }
+  } catch {
+    const pixels = new Uint8ClampedArray(buffer);
+    const imageData = { data: pixels, width, height };
+    const qrs = [];
+    let count = 0;
+    while (count < maxQRs) {
+      let code = jsQR(pixels, width, height, { inversionAttempts: 'dontInvert' });
+      if (!code) break;
+      qrs.push({ data: code.data, location: code.location });
+      count++;
+      maskQrRegionInBuffer(imageData, code.location);
+    }
+    return qrs;
   }
-  return Promise.resolve(qrs);
+  return [];
 }
 
 /**
@@ -409,17 +431,26 @@ async function globalCaptureLoop() {
       if (dataUrl && isGlobalActive && !isTabScrolling) {
         const frameHash = computeFrameHash(dataUrl);
 
-        // Skip decode only when a QR IS actively tracked and the frame hasn't changed.
-        // Rationale: if hasActiveQR=false, a dense QR may have simply not been detected yet
-        // (e.g. due to resolution or angle). Skipping on a static page would deadlock the
-        // scanner permanently. With jsQR in a Worker, idle scans are off-thread anyway.
-        if (hasActiveQR && frameHash === lastFrameHash) {
-          // QR is locked, frame is identical — safe to reuse previous result without re-decoding
-          const userFps = Math.max(1, Math.min(120, Number(settings.scanRate) || 2));
-          loopTimer = setTimeout(globalCaptureLoop, Math.round(1000 / userFps));
-          return;
+        if (frameHash === lastFrameHash) {
+          if (hasActiveQR) {
+            // QR is locked, frame is identical — safe to reuse previous result without re-decoding
+            unchangedEmptyFrames = 0;
+            const userFps = Math.max(1, Math.min(120, Number(settings.scanRate) || 2));
+            loopTimer = setTimeout(globalCaptureLoop, Math.round(1000 / userFps));
+            return;
+          } else {
+            unchangedEmptyFrames++;
+            if (unchangedEmptyFrames >= 2) {
+              // Frame was verified twice with no QR detected and is static.
+              // Eco-mode (2 FPS) until screen updates or user scrolls.
+              loopTimer = setTimeout(globalCaptureLoop, 500);
+              return;
+            }
+          }
+        } else {
+          unchangedEmptyFrames = 0;
+          lastFrameHash = frameHash;
         }
-        lastFrameHash = frameHash;
 
         const videoInfo = tabVideoRects.get(tab.id) || null;
         const decoded = await decodeDataUrl(dataUrl, maxW, videoInfo);
@@ -469,10 +500,10 @@ async function globalCaptureLoop() {
     const userFps = Math.max(1, Math.min(120, Number(settings.scanRate) || 2));
 
     // When a QR code is on screen, run at full userFps for maximum tracking smoothness (up to 120 FPS).
-    // When idle (no QR code on screen), scale with userFps (at least 4 FPS, or 75% of userFps for higher settings).
+    // When idle (no QR code on screen), cap idle scan loop at 10 FPS to avoid burning CPU on empty screens.
     const effectiveFps = hasActiveQR
       ? userFps
-      : Math.max(1, Math.min(userFps, Math.max(4, Math.round(userFps * 0.75))));
+      : Math.max(1, Math.min(10, userFps));
 
     const targetInterval = Math.round(1000 / effectiveFps);
     const elapsed = performance.now() - loopStartTime;
@@ -510,6 +541,8 @@ async function startGlobalScan() {
 async function stopGlobalScan() {
   isGlobalActive = false;
   hasActiveQR = false;
+  unchangedEmptyFrames = 0;
+  lastFrameHash = 0;
   if (loopTimer) {
     clearTimeout(loopTimer);
     loopTimer = null;

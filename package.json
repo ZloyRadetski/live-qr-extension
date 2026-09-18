@@ -22,5 +22,8 @@
     "esbuild": "^0.28.2",
     "jsqr": "^1.4.0",
     "qrcode": "^1.5.4"
+  },
+  "dependencies": {
+    "zxing-wasm": "^3.1.4"
   }
 }

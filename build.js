@@ -48,9 +48,15 @@ async function build() {
     minify: false
   });
 
-  // 4. Copy Overlay CSS to dist
+  // 4. Copy Overlay CSS and Wasm binaries to dist
   console.log('[Build] Copying overlay CSS...');
   fs.copyFileSync('src/content/overlay.css', 'dist/overlay.css');
+
+  console.log('[Build] Copying zxing_reader.wasm...');
+  fs.copyFileSync(
+    path.resolve('node_modules/zxing-wasm/dist/reader/zxing_reader.wasm'),
+    path.resolve('dist/zxing_reader.wasm')
+  );
 
   // 5. Bundle Decoder Worker
   console.log('[Build] Bundling decoder worker...');

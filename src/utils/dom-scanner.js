@@ -114,6 +114,28 @@ export function scanMediaElement(el, maxDimension = 1200) {
     if (el._qrRadarTainted) return [];
     width = el.width;
     height = el.height;
+
+    // Fast path: if canvas was verified static, reuse cached result directly without GPU readback
+    if (el._qrRadarIsStatic && el._qrRadarCached !== undefined && (el._qrRadarSkipCount || 0) < 10) {
+      el._qrRadarSkipCount = (el._qrRadarSkipCount || 0) + 1;
+      if (!el._qrRadarCached || el._qrRadarCached.length === 0) return [];
+      const rect = el.getBoundingClientRect();
+      const scaleX = rect.width / el._qrRadarCachedW;
+      const scaleY = rect.height / el._qrRadarCachedH;
+      return el._qrRadarCached.map((item) => ({
+        data: item.data,
+        location: {
+          topLeftCorner: { x: rect.left + item.loc.topLeftCorner.x * scaleX, y: rect.top + item.loc.topLeftCorner.y * scaleY },
+          topRightCorner: { x: rect.left + item.loc.topRightCorner.x * scaleX, y: rect.top + item.loc.topRightCorner.y * scaleY },
+          bottomRightCorner: { x: rect.left + item.loc.bottomRightCorner.x * scaleX, y: rect.top + item.loc.bottomRightCorner.y * scaleY },
+          bottomLeftCorner: { x: rect.left + item.loc.bottomLeftCorner.x * scaleX, y: rect.top + item.loc.bottomLeftCorner.y * scaleY }
+        },
+        rect,
+        element: el,
+        isDom: true
+      }));
+    }
+    el._qrRadarSkipCount = 0;
   } else if (el.tagName === 'VIDEO') {
     if (el._qrRadarTainted) return [];
     if (el.readyState < 2 || !el.videoWidth || !el.videoHeight) return [];
@@ -169,6 +191,45 @@ export function scanMediaElement(el, maxDimension = 1200) {
   try {
     ctx.drawImage(el, 0, 0, scanW, scanH);
     let imgData = ctx.getImageData(0, 0, scanW, scanH);
+
+    // Fast canvas pixel fingerprint check (< 0.01 ms)
+    if (el.tagName === 'CANVAS') {
+      const p = imgData.data;
+      const step = Math.max(1, Math.floor(p.length / 32));
+      let hash = 0x811c9dc5;
+      for (let i = 0; i < p.length; i += step) {
+        hash = ((hash ^ p[i]) * 0x01000193) >>> 0;
+      }
+
+      if (el._qrRadarCachedHash === hash && el._qrRadarCached !== undefined) {
+        // Content has not changed at all — promote to static after 2 consecutive identical frames
+        el._qrRadarStaticHits = (el._qrRadarStaticHits || 0) + 1;
+        if (el._qrRadarStaticHits >= 2) {
+          el._qrRadarIsStatic = true;
+        }
+        if (!el._qrRadarCached || el._qrRadarCached.length === 0) return [];
+        const rect = el.getBoundingClientRect();
+        const scaleX = rect.width / el._qrRadarCachedW;
+        const scaleY = rect.height / el._qrRadarCachedH;
+        return el._qrRadarCached.map((item) => ({
+          data: item.data,
+          location: {
+            topLeftCorner: { x: rect.left + item.loc.topLeftCorner.x * scaleX, y: rect.top + item.loc.topLeftCorner.y * scaleY },
+            topRightCorner: { x: rect.left + item.loc.topRightCorner.x * scaleX, y: rect.top + item.loc.topRightCorner.y * scaleY },
+            bottomRightCorner: { x: rect.left + item.loc.bottomRightCorner.x * scaleX, y: rect.top + item.loc.bottomRightCorner.y * scaleY },
+            bottomLeftCorner: { x: rect.left + item.loc.bottomLeftCorner.x * scaleX, y: rect.top + item.loc.bottomLeftCorner.y * scaleY }
+          },
+          rect,
+          element: el,
+          isDom: true
+        }));
+      }
+
+      el._qrRadarCachedHash = hash;
+      el._qrRadarStaticHits = 0;
+      el._qrRadarIsStatic = false;
+    }
+
     const found = [];
     const maxPerElement = 4;
     let count = 0;
@@ -217,7 +278,7 @@ export function scanMediaElement(el, maxDimension = 1200) {
       imgData = ctx.getImageData(0, 0, scanW, scanH);
     }
 
-    if (el.tagName === 'IMG' || el.tagName === 'VIDEO') {
+    if (el.tagName === 'IMG' || el.tagName === 'VIDEO' || el.tagName === 'CANVAS') {
       const currentSrc = el.currentSrc || el.src;
       el._qrRadarCachedSrc = currentSrc;
       el._qrRadarCachedW = scanW;

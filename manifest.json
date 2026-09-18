@@ -40,6 +40,20 @@
     "<all_urls>",
     "file:///*"
   ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "dist/zxing_reader.wasm"
+      ],
+      "matches": [
+        "<all_urls>",
+        "file:///*"
+      ]
+    }
+  ],
   "commands": {
     "toggle-scanner": {
       "suggested_key": {
