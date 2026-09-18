@@ -5,16 +5,26 @@
     HISTORY: "qr_radar_history"
   };
   var DEFAULT_SETTINGS = {
-    scanRate: 15,
-    // FPS: 8 (Eco), 15 (Balanced), 30 (High)
+    globalActive: false,
+    // Whether scanner runs globally across all tabs
+    scanRate: 12,
+    // FPS: 5 (Eco), 12 (Balanced), 20 (Turbo)
+    themeColor: "cyan",
+    // 'cyan' | 'emerald' | 'violet' | 'gold' | 'pink'
+    cardDisplayMode: "hover",
+    // 'hover' (expand on hover) | 'always' (always open) | 'compact' (mini pill only)
+    glowAnimation: true,
+    // Pulsing neon glow
+    cornerBrackets: true,
+    // Corner targeting brackets
+    soundEnabled: true,
+    // Audio chime on detection
     autoCopy: false,
     // Auto copy content on detection
-    soundEnabled: true,
-    // Subtle audio cue on detection
-    downsampleScale: 0.5,
-    // Frame downsampling for performance (0.5 = half resolution)
-    globalActive: false
-    // Whether scanner runs globally across all tabs
+    pauseOnScroll: true,
+    // Pause capture during scroll to save CPU
+    blacklist: []
+    // List of excluded domains (e.g. ["bank.com"])
   };
   function hasExtensionStorage() {
     return typeof browser !== "undefined" && browser.storage && browser.storage.local;
@@ -64,6 +74,32 @@
       localStorage.removeItem(STORAGE_KEYS.HISTORY);
     }
     return [];
+  }
+  function isDomainBlacklisted(url, blacklist = []) {
+    if (!url || !Array.isArray(blacklist) || blacklist.length === 0) return false;
+    try {
+      const hostname = new URL(url).hostname.toLowerCase();
+      return blacklist.some((item) => {
+        const b = item.toLowerCase().trim();
+        return hostname === b || hostname.endsWith(`.${b}`);
+      });
+    } catch {
+      return false;
+    }
+  }
+  async function toggleDomainBlacklist(domain) {
+    if (!domain) return [];
+    const cleanDomain = domain.toLowerCase().trim();
+    const settings = await getSettings();
+    const currentList = Array.isArray(settings.blacklist) ? settings.blacklist : [];
+    let updated;
+    if (currentList.includes(cleanDomain)) {
+      updated = currentList.filter((d) => d !== cleanDomain);
+    } else {
+      updated = [...currentList, cleanDomain];
+    }
+    await saveSettings({ blacklist: updated });
+    return updated;
   }
 
   // src/utils/parser.js
@@ -182,45 +218,79 @@
 
   // src/popup/popup.js
   var activeTabId = null;
+  var currentDomain = "";
   var isScannerActive = false;
+  var navScanner = document.getElementById("nav-scanner");
+  var navSettings = document.getElementById("nav-settings");
+  var panelScanner = document.getElementById("panel-scanner");
+  var panelSettings = document.getElementById("panel-settings");
   var statusBadge = document.getElementById("status-badge");
   var statusLabel = statusBadge.querySelector(".status-label");
   var toggleBtn = document.getElementById("toggle-scan-btn");
   var toggleLabel = document.getElementById("toggle-scan-label");
-  var fpsSelector = document.getElementById("fps-selector");
-  var settingSound = document.getElementById("setting-sound");
-  var settingAutoCopy = document.getElementById("setting-autocopy");
   var historyList = document.getElementById("history-list");
   var historyCount = document.getElementById("history-count");
   var clearHistoryBtn = document.getElementById("clear-history-btn");
+  var themeSwatches = document.getElementById("theme-swatches");
+  var cardModeSelector = document.getElementById("card-mode-selector");
+  var settingGlow = document.getElementById("setting-glow");
+  var settingBrackets = document.getElementById("setting-brackets");
+  var settingSound = document.getElementById("setting-sound");
+  var settingAutoCopy = document.getElementById("setting-autocopy");
+  var settingPauseScroll = document.getElementById("setting-pause-scroll");
+  var fpsSelector = document.getElementById("fps-selector");
+  var currentDomainText = document.getElementById("current-domain-text");
+  var toggleBlacklistBtn = document.getElementById("toggle-blacklist-btn");
+  var blacklistChips = document.getElementById("blacklist-chips");
   async function init() {
-    await loadPreferences();
+    setupTabs();
     await refreshActiveTab();
+    await loadPreferences();
     await refreshHistory();
     setupEventListeners();
   }
-  async function loadPreferences() {
-    const settings = await getSettings();
-    const currentFps = String(settings.scanRate || 15);
-    fpsSelector.querySelectorAll(".segment-btn").forEach((btn) => {
-      btn.classList.toggle("active", btn.dataset.fps === currentFps);
-    });
-    settingSound.checked = settings.soundEnabled ?? true;
-    settingAutoCopy.checked = settings.autoCopy ?? false;
+  function setupTabs() {
+    navScanner.addEventListener("click", () => switchTab("scanner"));
+    navSettings.addEventListener("click", () => switchTab("settings"));
+  }
+  function switchTab(tabName) {
+    if (tabName === "scanner") {
+      navScanner.classList.add("active");
+      navSettings.classList.remove("active");
+      panelScanner.classList.add("active");
+      panelSettings.classList.remove("active");
+    } else {
+      navSettings.classList.add("active");
+      navScanner.classList.remove("active");
+      panelSettings.classList.add("active");
+      panelScanner.classList.remove("active");
+    }
   }
   async function refreshActiveTab() {
     try {
-      const response = await browser.runtime.sendMessage({
-        type: "GET_GLOBAL_STATUS"
-      });
+      if (typeof browser !== "undefined" && browser.tabs) {
+        const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+        if (tab && tab.id) {
+          activeTabId = tab.id;
+          if (tab.url) {
+            try {
+              currentDomain = new URL(tab.url).hostname;
+              currentDomainText.textContent = currentDomain;
+            } catch {
+              currentDomain = "";
+              currentDomainText.textContent = "Non-web page";
+            }
+          }
+        }
+      }
+      const response = await browser.runtime.sendMessage({ type: "GET_GLOBAL_STATUS" });
       if (response && response.active !== void 0) {
         updateUIState(response.active);
-        return;
       }
     } catch (err) {
-      console.warn("[QR-Radar Popup] Error querying global status:", err);
+      console.warn("[QR-Radar Popup] Error refreshing tab state:", err);
+      updateUIState(false);
     }
-    updateUIState(false);
   }
   function updateUIState(active) {
     isScannerActive = active;
@@ -236,12 +306,64 @@
       toggleLabel.textContent = "Turn ON Scanner (Everywhere)";
     }
   }
+  async function loadPreferences() {
+    const settings = await getSettings();
+    const currentTheme = settings.themeColor || "cyan";
+    themeSwatches.querySelectorAll(".color-swatch").forEach((swatch) => {
+      swatch.classList.toggle("active", swatch.dataset.theme === currentTheme);
+    });
+    const currentMode = settings.cardDisplayMode || "hover";
+    cardModeSelector.querySelectorAll(".segment-btn").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.mode === currentMode);
+    });
+    settingGlow.checked = settings.glowAnimation ?? true;
+    settingBrackets.checked = settings.cornerBrackets ?? true;
+    settingSound.checked = settings.soundEnabled ?? true;
+    settingAutoCopy.checked = settings.autoCopy ?? false;
+    settingPauseScroll.checked = settings.pauseOnScroll ?? true;
+    const currentFps = String(settings.scanRate || 12);
+    fpsSelector.querySelectorAll(".segment-btn").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.fps === currentFps);
+    });
+    renderBlacklist(settings.blacklist || []);
+  }
+  function renderBlacklist(blacklist = []) {
+    if (!currentDomain || currentDomain === "Non-web page") {
+      toggleBlacklistBtn.style.display = "none";
+    } else {
+      toggleBlacklistBtn.style.display = "block";
+      const isExcluded = isDomainBlacklisted(`https://${currentDomain}`, blacklist);
+      if (isExcluded) {
+        toggleBlacklistBtn.textContent = "Include this site";
+        toggleBlacklistBtn.classList.add("blacklisted");
+      } else {
+        toggleBlacklistBtn.textContent = "Exclude this site";
+        toggleBlacklistBtn.classList.remove("blacklisted");
+      }
+    }
+    if (blacklist.length === 0) {
+      blacklistChips.innerHTML = '<span style="font-size: 11px; color: var(--text-muted);">No sites excluded</span>';
+      return;
+    }
+    blacklistChips.innerHTML = blacklist.map((domain) => `
+    <span class="blacklist-chip">
+      ${escapeHtml(domain)}
+      <button class="chip-remove" data-domain="${escapeHtml(domain)}" title="Remove exclusion">\u2715</button>
+    </span>
+  `).join("");
+    blacklistChips.querySelectorAll(".chip-remove").forEach((btn) => {
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const domain = btn.dataset.domain;
+        const updated = await toggleDomainBlacklist(domain);
+        renderBlacklist(updated);
+      });
+    });
+  }
   async function handleToggleClick() {
     const targetType = isScannerActive ? "STOP_GLOBAL_SCAN" : "START_GLOBAL_SCAN";
     try {
-      const response = await browser.runtime.sendMessage({
-        type: targetType
-      });
+      const response = await browser.runtime.sendMessage({ type: targetType });
       if (response && response.active !== void 0) {
         updateUIState(response.active);
         if (response.active) {
@@ -252,7 +374,7 @@
       console.error("[QR-Radar Popup] Failed to toggle global scanner:", err);
     }
   }
-  async function updateSettings(updates) {
+  async function applySettingChange(updates) {
     const newSettings = await saveSettings(updates);
     if (activeTabId) {
       try {
@@ -334,19 +456,36 @@
   }
   function setupEventListeners() {
     toggleBtn.addEventListener("click", handleToggleClick);
+    themeSwatches.addEventListener("click", (e) => {
+      const swatch = e.target.closest(".color-swatch");
+      if (!swatch) return;
+      themeSwatches.querySelectorAll(".color-swatch").forEach((s) => s.classList.remove("active"));
+      swatch.classList.add("active");
+      applySettingChange({ themeColor: swatch.dataset.theme });
+    });
+    cardModeSelector.addEventListener("click", (e) => {
+      const btn = e.target.closest(".segment-btn");
+      if (!btn) return;
+      cardModeSelector.querySelectorAll(".segment-btn").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      applySettingChange({ cardDisplayMode: btn.dataset.mode });
+    });
     fpsSelector.addEventListener("click", (e) => {
       const btn = e.target.closest(".segment-btn");
       if (!btn) return;
       fpsSelector.querySelectorAll(".segment-btn").forEach((b) => b.classList.remove("active"));
       btn.classList.add("active");
-      const fps = parseInt(btn.dataset.fps, 10);
-      updateSettings({ scanRate: fps });
+      applySettingChange({ scanRate: parseInt(btn.dataset.fps, 10) });
     });
-    settingSound.addEventListener("change", () => {
-      updateSettings({ soundEnabled: settingSound.checked });
-    });
-    settingAutoCopy.addEventListener("change", () => {
-      updateSettings({ autoCopy: settingAutoCopy.checked });
+    settingGlow.addEventListener("change", () => applySettingChange({ glowAnimation: settingGlow.checked }));
+    settingBrackets.addEventListener("change", () => applySettingChange({ cornerBrackets: settingBrackets.checked }));
+    settingSound.addEventListener("change", () => applySettingChange({ soundEnabled: settingSound.checked }));
+    settingAutoCopy.addEventListener("change", () => applySettingChange({ autoCopy: settingAutoCopy.checked }));
+    settingPauseScroll.addEventListener("change", () => applySettingChange({ pauseOnScroll: settingPauseScroll.checked }));
+    toggleBlacklistBtn.addEventListener("click", async () => {
+      if (!currentDomain) return;
+      const updated = await toggleDomainBlacklist(currentDomain);
+      renderBlacklist(updated);
     });
     clearHistoryBtn.addEventListener("click", async () => {
       if (confirm("Clear all scan history?")) {

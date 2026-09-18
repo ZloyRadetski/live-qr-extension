@@ -24,82 +24,197 @@
         </div>
         <div class="brand-text">
           <h1>QR Radar</h1>
-          <span class="version">v1.0 • Real-Time HUD</span>
+          <span class="version">v1.2 • Configurable HUD</span>
         </div>
       </div>
       <div id="status-badge" class="status-badge status-idle">
         <span class="status-dot"></span>
-        <span class="status-label">Idle</span>
+        <span class="status-label">Off</span>
       </div>
     </header>
 
-    <!-- Main Scanner Toggle Action -->
-    <div class="main-action-section">
-      <button id="toggle-scan-btn" class="toggle-scan-btn">
-        <div class="btn-glow"></div>
-        <svg class="radar-scan-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+    <!-- Tab Navigation Bar -->
+    <div class="tabs-nav">
+      <button id="nav-scanner" class="tab-btn active">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="12" cy="12" r="9"></circle>
-          <path d="M12 3a9 9 0 0 1 9 9"></path>
-          <circle cx="12" cy="12" r="2"></circle>
+          <line x1="12" y1="3" x2="12" y2="7"></line>
         </svg>
-        <span id="toggle-scan-label">Start Real-Time Scanner</span>
+        Scanner
       </button>
-      <div class="hotkey-tip">
-        Shortcut: <kbd>Alt</kbd> + <kbd>Q</kbd> to toggle anytime
-      </div>
+      <button id="nav-settings" class="tab-btn">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+        Settings
+      </button>
     </div>
 
-    <!-- Quick Settings Accordion / Panel -->
-    <div class="settings-card">
-      <div class="setting-row">
-        <div class="setting-info">
-          <span class="setting-title">Scan Rate (FPS)</span>
-          <span class="setting-desc">Balance speed vs CPU usage</span>
-        </div>
-        <div class="segmented-control" id="fps-selector">
-          <button class="segment-btn" data-fps="8">8 (Eco)</button>
-          <button class="segment-btn active" data-fps="15">15</button>
-          <button class="segment-btn" data-fps="30">30</button>
-        </div>
-      </div>
-
-      <div class="setting-row">
-        <div class="setting-info">
-          <span class="setting-title">Audio Cue</span>
-          <span class="setting-desc">Play chime on detection</span>
-        </div>
-        <label class="toggle-switch">
-          <input type="checkbox" id="setting-sound" checked>
-          <span class="slider"></span>
-        </label>
-      </div>
-
-      <div class="setting-row">
-        <div class="setting-info">
-          <span class="setting-title">Auto-Copy</span>
-          <span class="setting-desc">Copy data to clipboard instantly</span>
-        </div>
-        <label class="toggle-switch">
-          <input type="checkbox" id="setting-autocopy">
-          <span class="slider"></span>
-        </label>
-      </div>
-    </div>
-
-    <!-- Scan History Section -->
-    <div class="history-section">
-      <div class="history-header">
-        <div class="history-title">
-          <span>Recent Scans</span>
-          <span id="history-count" class="counter-badge">0</span>
-        </div>
-        <button id="clear-history-btn" class="clear-history-btn" title="Clear scan history">
-          Clear
+    <!-- PANEL 1: Scanner & History -->
+    <div id="panel-scanner" class="tab-panel active">
+      <!-- Main Scanner Toggle Action -->
+      <div class="main-action-section">
+        <button id="toggle-scan-btn" class="toggle-scan-btn">
+          <div class="btn-glow"></div>
+          <svg class="radar-scan-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+            <circle cx="12" cy="12" r="9"></circle>
+            <path d="M12 3a9 9 0 0 1 9 9"></path>
+            <circle cx="12" cy="12" r="2"></circle>
+          </svg>
+          <span id="toggle-scan-label">Turn ON Scanner (Everywhere)</span>
         </button>
+        <div class="hotkey-tip">
+          Shortcut: <kbd>Alt</kbd> + <kbd>Q</kbd> to toggle globally
+        </div>
       </div>
 
-      <div id="history-list" class="history-list">
-        <!-- Empty state or scan items dynamically populated -->
+      <!-- Scan History Section -->
+      <div class="history-section">
+        <div class="history-header">
+          <div class="history-title">
+            <span>Recent Scans</span>
+            <span id="history-count" class="counter-badge">0</span>
+          </div>
+          <button id="clear-history-btn" class="clear-history-btn" title="Clear scan history">
+            Clear
+          </button>
+        </div>
+
+        <div id="history-list" class="history-list">
+          <!-- Dynamically populated -->
+        </div>
+      </div>
+    </div>
+
+    <!-- PANEL 2: Settings & Customization -->
+    <div id="panel-settings" class="tab-panel">
+      <!-- Section: Appearance -->
+      <div class="settings-group">
+        <div class="group-title">Appearance & HUD</div>
+
+        <!-- Theme Color Swatches -->
+        <div class="setting-row" style="align-items: flex-start;">
+          <div class="setting-info">
+            <span class="setting-title">HUD Theme Color</span>
+            <span class="setting-desc">Glowing frame and accents</span>
+          </div>
+          <div class="theme-swatches" id="theme-swatches">
+            <button class="color-swatch swatch-cyan active" data-theme="cyan" title="Cyber Cyan"></button>
+            <button class="color-swatch swatch-emerald" data-theme="emerald" title="Emerald Green"></button>
+            <button class="color-swatch swatch-violet" data-theme="violet" title="Electric Violet"></button>
+            <button class="color-swatch swatch-gold" data-theme="gold" title="Amber Gold"></button>
+            <button class="color-swatch swatch-pink" data-theme="pink" title="Neon Pink"></button>
+          </div>
+        </div>
+
+        <!-- Card Display Mode -->
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-title">Details Card</span>
+            <span class="setting-desc">How URL and actions appear</span>
+          </div>
+          <div class="segmented-control" id="card-mode-selector">
+            <button class="segment-btn active" data-mode="hover">Hover</button>
+            <button class="segment-btn" data-mode="always">Always</button>
+            <button class="segment-btn" data-mode="compact">Compact</button>
+          </div>
+        </div>
+
+        <!-- Pulse Glow Toggle -->
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-title">Neon Pulse Glow</span>
+            <span class="setting-desc">Animated pulsing effect</span>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="setting-glow" checked>
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <!-- Corner Brackets Toggle -->
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-title">Target Corner Reticles</span>
+            <span class="setting-desc">Brackets around corners</span>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="setting-brackets" checked>
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Section: Behavior & Performance -->
+      <div class="settings-group">
+        <div class="group-title">Behavior & Performance</div>
+
+        <!-- Audio Cue -->
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-title">Audio Chime</span>
+            <span class="setting-desc">Subtle sound on detection</span>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="setting-sound" checked>
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <!-- Auto-Copy -->
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-title">Auto-Copy Content</span>
+            <span class="setting-desc">Copy to clipboard instantly</span>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="setting-autocopy">
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <!-- Pause on Scroll -->
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-title">Pause During Scroll</span>
+            <span class="setting-desc">Saves CPU and prevents lag</span>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="setting-pause-scroll" checked>
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <!-- Scan Rate (Speed Profile) -->
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-title">Scan Speed</span>
+            <span class="setting-desc">Balance speed vs CPU</span>
+          </div>
+          <div class="segmented-control" id="fps-selector">
+            <button class="segment-btn" data-fps="5">Eco (5)</button>
+            <button class="segment-btn active" data-fps="12">Normal (12)</button>
+            <button class="segment-btn" data-fps="20">Turbo (20)</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Section: Domain Exclusions -->
+      <div class="settings-group">
+        <div class="group-title">Site Exclusions</div>
+        <div class="blacklist-control">
+          <div class="current-site-info">
+            <span class="site-label">Active site:</span>
+            <span id="current-domain-text" class="current-domain-name">Checking...</span>
+          </div>
+          <button id="toggle-blacklist-btn" class="blacklist-btn">
+            Exclude this site
+          </button>
+        </div>
+        <div id="blacklist-chips" class="blacklist-chips">
+          <!-- Populated dynamically -->
+        </div>
       </div>
     </div>
   </div>

@@ -177,16 +177,26 @@
     HISTORY: "qr_radar_history"
   };
   var DEFAULT_SETTINGS = {
-    scanRate: 15,
-    // FPS: 8 (Eco), 15 (Balanced), 30 (High)
+    globalActive: false,
+    // Whether scanner runs globally across all tabs
+    scanRate: 12,
+    // FPS: 5 (Eco), 12 (Balanced), 20 (Turbo)
+    themeColor: "cyan",
+    // 'cyan' | 'emerald' | 'violet' | 'gold' | 'pink'
+    cardDisplayMode: "hover",
+    // 'hover' (expand on hover) | 'always' (always open) | 'compact' (mini pill only)
+    glowAnimation: true,
+    // Pulsing neon glow
+    cornerBrackets: true,
+    // Corner targeting brackets
+    soundEnabled: true,
+    // Audio chime on detection
     autoCopy: false,
     // Auto copy content on detection
-    soundEnabled: true,
-    // Subtle audio cue on detection
-    downsampleScale: 0.5,
-    // Frame downsampling for performance (0.5 = half resolution)
-    globalActive: false
-    // Whether scanner runs globally across all tabs
+    pauseOnScroll: true,
+    // Pause capture during scroll to save CPU
+    blacklist: []
+    // List of excluded domains (e.g. ["bank.com"])
   };
   function hasExtensionStorage() {
     return typeof browser !== "undefined" && browser.storage && browser.storage.local;
@@ -314,6 +324,10 @@
       this.options = {
         soundEnabled: true,
         autoCopy: false,
+        themeColor: "cyan",
+        cardDisplayMode: "hover",
+        glowAnimation: true,
+        cornerBrackets: true,
         onStopRequested: () => {
         },
         ...options
@@ -334,12 +348,32 @@
       this.audioCtx = null;
     }
     /**
+     * Applies CSS classes for themes, display mode, and animations.
+     */
+    applySettingsClasses() {
+      if (!this.root) return;
+      this.root.className = [
+        `theme-${this.options.themeColor || "cyan"}`,
+        `mode-${this.options.cardDisplayMode || "hover"}`,
+        this.options.glowAnimation === false ? "no-glow" : "",
+        this.options.cornerBrackets === false ? "no-brackets" : ""
+      ].filter(Boolean).join(" ");
+    }
+    /**
+     * Updates customizable options dynamically.
+     */
+    updateSettings(newSettings) {
+      this.options = { ...this.options, ...newSettings };
+      this.applySettingsClasses();
+    }
+    /**
      * Initializes overlay DOM structure.
      */
     mount() {
       if (this.root) return;
       this.root = document.createElement("div");
       this.root.id = "qr-radar-root";
+      this.applySettingsClasses();
       this.boxElement = document.createElement("div");
       this.boxElement.className = "qr-radar-box qr-hidden";
       this.boxElement.innerHTML = `
@@ -633,6 +667,10 @@
     overlay = new QROverlayManager({
       soundEnabled: settings.soundEnabled,
       autoCopy: settings.autoCopy,
+      themeColor: settings.themeColor,
+      cardDisplayMode: settings.cardDisplayMode,
+      glowAnimation: settings.glowAnimation,
+      cornerBrackets: settings.cornerBrackets,
       onStopRequested: () => {
         try {
           browser.runtime.sendMessage({ type: "STOP_SCAN" }).catch(() => {
@@ -694,12 +732,7 @@
         }
         case "SETTINGS_UPDATED": {
           if (overlay && message.settings) {
-            if (message.settings.soundEnabled !== void 0) {
-              overlay.options.soundEnabled = message.settings.soundEnabled;
-            }
-            if (message.settings.autoCopy !== void 0) {
-              overlay.options.autoCopy = message.settings.autoCopy;
-            }
+            overlay.updateSettings(message.settings);
           }
           sendResponse({ success: true });
           return false;

@@ -8,7 +8,7 @@
  */
 
 import jsQR from 'jsqr';
-import { getSettings, saveSettings, addScanHistory } from '../utils/storage.js';
+import { getSettings, saveSettings, addScanHistory, isDomainBlacklisted } from '../utils/storage.js';
 import { classifyContent } from '../utils/parser.js';
 
 let isGlobalActive = false;
@@ -98,7 +98,7 @@ async function ensureInjected(tabId) {
 }
 
 /**
- * Adaptive continuous capture loop with dynamic sleep and scroll pause.
+ * Adaptive continuous capture loop with dynamic sleep, blacklist, and scroll pause.
  */
 async function globalCaptureLoop() {
   if (!isGlobalActive) {
@@ -108,9 +108,11 @@ async function globalCaptureLoop() {
 
   isLoopRunning = true;
   const loopStartTime = performance.now();
+  const settings = await getSettings();
 
-  // 1. Power Saver: Skip capture completely if window is unfocused or user is scrolling
-  if (!isWindowFocused || isTabScrolling) {
+  // 1. Power Saver: Skip capture if window is blurred or (pauseOnScroll && actively scrolling)
+  const shouldPauseForScroll = (settings.pauseOnScroll !== false) && isTabScrolling;
+  if (!isWindowFocused || shouldPauseForScroll) {
     setTimeout(globalCaptureLoop, 120);
     return;
   }
@@ -119,6 +121,12 @@ async function globalCaptureLoop() {
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
 
     if (tab && tab.id && tab.windowId && !tab.url?.startsWith('about:')) {
+      // 2. Check exclusion blacklist
+      if (isDomainBlacklisted(tab.url, settings.blacklist)) {
+        setTimeout(globalCaptureLoop, 500);
+        return;
+      }
+
       const dataUrl = await browser.tabs.captureVisibleTab(tab.windowId, {
         format: 'jpeg',
         quality: 60

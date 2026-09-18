@@ -2439,6 +2439,10 @@ var init_overlay = __esm({
         this.options = {
           soundEnabled: true,
           autoCopy: false,
+          themeColor: "cyan",
+          cardDisplayMode: "hover",
+          glowAnimation: true,
+          cornerBrackets: true,
           onStopRequested: () => {
           },
           ...options
@@ -2459,12 +2463,32 @@ var init_overlay = __esm({
         this.audioCtx = null;
       }
       /**
+       * Applies CSS classes for themes, display mode, and animations.
+       */
+      applySettingsClasses() {
+        if (!this.root) return;
+        this.root.className = [
+          `theme-${this.options.themeColor || "cyan"}`,
+          `mode-${this.options.cardDisplayMode || "hover"}`,
+          this.options.glowAnimation === false ? "no-glow" : "",
+          this.options.cornerBrackets === false ? "no-brackets" : ""
+        ].filter(Boolean).join(" ");
+      }
+      /**
+       * Updates customizable options dynamically.
+       */
+      updateSettings(newSettings) {
+        this.options = { ...this.options, ...newSettings };
+        this.applySettingsClasses();
+      }
+      /**
        * Initializes overlay DOM structure.
        */
       mount() {
         if (this.root) return;
         this.root = document.createElement("div");
         this.root.id = "qr-radar-root";
+        this.applySettingsClasses();
         this.boxElement = document.createElement("div");
         this.boxElement.className = "qr-radar-box qr-hidden";
         this.boxElement.innerHTML = `

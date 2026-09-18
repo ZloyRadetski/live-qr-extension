@@ -8,12 +8,17 @@ const STORAGE_KEYS = {
   HISTORY: 'qr_radar_history'
 };
 
-const DEFAULT_SETTINGS = {
-  scanRate: 15,         // FPS: 8 (Eco), 15 (Balanced), 30 (High)
-  autoCopy: false,      // Auto copy content on detection
-  soundEnabled: true,   // Subtle audio cue on detection
-  downsampleScale: 0.5, // Frame downsampling for performance (0.5 = half resolution)
-  globalActive: false   // Whether scanner runs globally across all tabs
+export const DEFAULT_SETTINGS = {
+  globalActive: false,       // Whether scanner runs globally across all tabs
+  scanRate: 12,              // FPS: 5 (Eco), 12 (Balanced), 20 (Turbo)
+  themeColor: 'cyan',        // 'cyan' | 'emerald' | 'violet' | 'gold' | 'pink'
+  cardDisplayMode: 'hover',  // 'hover' (expand on hover) | 'always' (always open) | 'compact' (mini pill only)
+  glowAnimation: true,       // Pulsing neon glow
+  cornerBrackets: true,      // Corner targeting brackets
+  soundEnabled: true,        // Audio chime on detection
+  autoCopy: false,           // Auto copy content on detection
+  pauseOnScroll: true,       // Pause capture during scroll to save CPU
+  blacklist: []              // List of excluded domains (e.g. ["bank.com"])
 };
 
 /**
@@ -119,4 +124,45 @@ export async function clearScanHistory() {
     localStorage.removeItem(STORAGE_KEYS.HISTORY);
   }
   return [];
+}
+
+/**
+ * Checks if a given URL or hostname is blacklisted.
+ * @param {string} url
+ * @param {string[]} [blacklist]
+ * @returns {boolean}
+ */
+export function isDomainBlacklisted(url, blacklist = []) {
+  if (!url || !Array.isArray(blacklist) || blacklist.length === 0) return false;
+  try {
+    const hostname = new URL(url).hostname.toLowerCase();
+    return blacklist.some((item) => {
+      const b = item.toLowerCase().trim();
+      return hostname === b || hostname.endsWith(`.${b}`);
+    });
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Toggles a domain in the exclusion blacklist.
+ * @param {string} domain
+ * @returns {Promise<string[]>}
+ */
+export async function toggleDomainBlacklist(domain) {
+  if (!domain) return [];
+  const cleanDomain = domain.toLowerCase().trim();
+  const settings = await getSettings();
+  const currentList = Array.isArray(settings.blacklist) ? settings.blacklist : [];
+
+  let updated;
+  if (currentList.includes(cleanDomain)) {
+    updated = currentList.filter((d) => d !== cleanDomain);
+  } else {
+    updated = [...currentList, cleanDomain];
+  }
+
+  await saveSettings({ blacklist: updated });
+  return updated;
 }

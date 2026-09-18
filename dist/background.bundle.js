@@ -10057,16 +10057,26 @@
     HISTORY: "qr_radar_history"
   };
   var DEFAULT_SETTINGS = {
-    scanRate: 15,
-    // FPS: 8 (Eco), 15 (Balanced), 30 (High)
+    globalActive: false,
+    // Whether scanner runs globally across all tabs
+    scanRate: 12,
+    // FPS: 5 (Eco), 12 (Balanced), 20 (Turbo)
+    themeColor: "cyan",
+    // 'cyan' | 'emerald' | 'violet' | 'gold' | 'pink'
+    cardDisplayMode: "hover",
+    // 'hover' (expand on hover) | 'always' (always open) | 'compact' (mini pill only)
+    glowAnimation: true,
+    // Pulsing neon glow
+    cornerBrackets: true,
+    // Corner targeting brackets
+    soundEnabled: true,
+    // Audio chime on detection
     autoCopy: false,
     // Auto copy content on detection
-    soundEnabled: true,
-    // Subtle audio cue on detection
-    downsampleScale: 0.5,
-    // Frame downsampling for performance (0.5 = half resolution)
-    globalActive: false
-    // Whether scanner runs globally across all tabs
+    pauseOnScroll: true,
+    // Pause capture during scroll to save CPU
+    blacklist: []
+    // List of excluded domains (e.g. ["bank.com"])
   };
   function hasExtensionStorage() {
     return typeof browser !== "undefined" && browser.storage && browser.storage.local;
@@ -10129,6 +10139,18 @@
       localStorage.setItem(STORAGE_KEYS.HISTORY, JSON.stringify(updated));
     }
     return updated;
+  }
+  function isDomainBlacklisted(url, blacklist = []) {
+    if (!url || !Array.isArray(blacklist) || blacklist.length === 0) return false;
+    try {
+      const hostname = new URL(url).hostname.toLowerCase();
+      return blacklist.some((item) => {
+        const b = item.toLowerCase().trim();
+        return hostname === b || hostname.endsWith(`.${b}`);
+      });
+    } catch {
+      return false;
+    }
   }
 
   // src/utils/parser.js
@@ -10315,13 +10337,19 @@
     }
     isLoopRunning = true;
     const loopStartTime = performance.now();
-    if (!isWindowFocused || isTabScrolling) {
+    const settings = await getSettings();
+    const shouldPauseForScroll = settings.pauseOnScroll !== false && isTabScrolling;
+    if (!isWindowFocused || shouldPauseForScroll) {
       setTimeout(globalCaptureLoop, 120);
       return;
     }
     try {
       const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
       if (tab && tab.id && tab.windowId && !tab.url?.startsWith("about:")) {
+        if (isDomainBlacklisted(tab.url, settings.blacklist)) {
+          setTimeout(globalCaptureLoop, 500);
+          return;
+        }
         const dataUrl = await browser.tabs.captureVisibleTab(tab.windowId, {
           format: "jpeg",
           quality: 60
@@ -10356,8 +10384,8 @@
     } catch (err) {
     }
     if (isGlobalActive) {
-      const settings = await getSettings();
-      const baseFps = settings.scanRate || 15;
+      const settings2 = await getSettings();
+      const baseFps = settings2.scanRate || 15;
       const effectiveFps = hasActiveQR ? Math.min(4, baseFps) : baseFps;
       const targetInterval = Math.round(1e3 / effectiveFps);
       const elapsed = performance.now() - loopStartTime;

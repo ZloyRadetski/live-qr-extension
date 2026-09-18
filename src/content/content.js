@@ -20,6 +20,10 @@ async function initOverlay() {
   overlay = new QROverlayManager({
     soundEnabled: settings.soundEnabled,
     autoCopy: settings.autoCopy,
+    themeColor: settings.themeColor,
+    cardDisplayMode: settings.cardDisplayMode,
+    glowAnimation: settings.glowAnimation,
+    cornerBrackets: settings.cornerBrackets,
     onStopRequested: () => {
       // Notify background to stop capture loop
       try {
@@ -93,12 +97,7 @@ if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.onMessa
 
       case 'SETTINGS_UPDATED': {
         if (overlay && message.settings) {
-          if (message.settings.soundEnabled !== undefined) {
-            overlay.options.soundEnabled = message.settings.soundEnabled;
-          }
-          if (message.settings.autoCopy !== undefined) {
-            overlay.options.autoCopy = message.settings.autoCopy;
-          }
+          overlay.updateSettings(message.settings);
         }
         sendResponse({ success: true });
         return false;

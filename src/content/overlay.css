@@ -1,5 +1,48 @@
 /* QR Radar - Real-Time Screen HUD Styling */
 
+:root {
+  --qr-color: #00f0ff;
+  --qr-color-sec: #38ef7d;
+  --qr-glow: rgba(0, 240, 255, 0.4);
+  --qr-bg-tint: rgba(0, 240, 255, 0.05);
+}
+
+/* Color Themes */
+#qr-radar-root.theme-cyan {
+  --qr-color: #00f0ff;
+  --qr-color-sec: #38ef7d;
+  --qr-glow: rgba(0, 240, 255, 0.4);
+  --qr-bg-tint: rgba(0, 240, 255, 0.05);
+}
+
+#qr-radar-root.theme-emerald {
+  --qr-color: #10b981;
+  --qr-color-sec: #34d399;
+  --qr-glow: rgba(16, 185, 129, 0.4);
+  --qr-bg-tint: rgba(16, 185, 129, 0.05);
+}
+
+#qr-radar-root.theme-violet {
+  --qr-color: #a855f7;
+  --qr-color-sec: #c084fc;
+  --qr-glow: rgba(168, 85, 247, 0.4);
+  --qr-bg-tint: rgba(168, 85, 247, 0.05);
+}
+
+#qr-radar-root.theme-gold {
+  --qr-color: #f59e0b;
+  --qr-color-sec: #fbbf24;
+  --qr-glow: rgba(245, 158, 11, 0.4);
+  --qr-bg-tint: rgba(245, 158, 11, 0.05);
+}
+
+#qr-radar-root.theme-pink {
+  --qr-color: #ec4899;
+  --qr-color-sec: #f472b6;
+  --qr-glow: rgba(236, 72, 153, 0.4);
+  --qr-bg-tint: rgba(236, 72, 153, 0.05);
+}
+
 #qr-radar-root {
   position: fixed !important;
   top: 0 !important;
@@ -21,14 +64,14 @@
   -webkit-font-smoothing: antialiased;
 }
 
-/* QR Bounding Box and Target Reticles (GPU-Accelerated) */
+/* QR Bounding Box (GPU-Accelerated) */
 .qr-radar-box {
   position: absolute;
   top: 0;
   left: 0;
   will-change: transform;
   transform-origin: 0 0;
-  pointer-events: auto; /* Allows hover detection */
+  pointer-events: auto;
   transition: opacity 0.2s ease;
 }
 
@@ -41,19 +84,24 @@
 .qr-radar-box-frame {
   position: absolute;
   inset: -6px;
-  border: 2px solid rgba(0, 240, 255, 0.85);
+  border: 2px solid var(--qr-color);
   border-radius: 12px;
-  background: rgba(0, 240, 255, 0.05);
-  box-shadow: 0 0 20px rgba(0, 240, 255, 0.35), inset 0 0 15px rgba(0, 240, 255, 0.1);
+  background: var(--qr-bg-tint);
+  box-shadow: 0 0 20px var(--qr-glow), inset 0 0 15px rgba(255, 255, 255, 0.03);
   animation: qr-box-glow 2s infinite alternate ease-in-out;
   cursor: pointer;
   pointer-events: auto;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
+.no-glow .qr-radar-box-frame {
+  animation: none !important;
+  box-shadow: none !important;
+}
+
 .qr-radar-box:hover .qr-radar-box-frame {
-  border-color: #00f0ff;
-  box-shadow: 0 0 28px rgba(0, 240, 255, 0.55), inset 0 0 20px rgba(0, 240, 255, 0.2);
+  border-color: var(--qr-color);
+  box-shadow: 0 0 28px var(--qr-glow), inset 0 0 20px rgba(255, 255, 255, 0.05);
 }
 
 /* Mini Badge in Top Corner of Frame */
@@ -67,11 +115,11 @@
   background: rgba(13, 17, 23, 0.94);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(0, 240, 255, 0.45);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45), 0 0 10px rgba(0, 240, 255, 0.2);
+  border: 1px solid var(--qr-color);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45), 0 0 10px var(--qr-glow);
   border-radius: 9999px;
   padding: 2px 8px;
-  color: #00f0ff;
+  color: var(--qr-color);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.4px;
@@ -81,8 +129,8 @@
 }
 
 .qr-radar-mini-badge:hover {
-  border-color: #00f0ff;
-  box-shadow: 0 4px 16px rgba(0, 240, 255, 0.45);
+  border-color: var(--qr-color);
+  box-shadow: 0 4px 16px var(--qr-glow);
   transform: scale(1.05);
 }
 
@@ -90,8 +138,8 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #00f0ff;
-  box-shadow: 0 0 6px #00f0ff;
+  background: var(--qr-color);
+  box-shadow: 0 0 6px var(--qr-color);
 }
 
 /* Corner Reticles for High-Tech feel */
@@ -99,9 +147,13 @@
   position: absolute;
   width: 14px;
   height: 14px;
-  border-color: #38ef7d;
+  border-color: var(--qr-color-sec);
   border-style: solid;
   pointer-events: none;
+}
+
+.no-brackets .qr-radar-corner {
+  display: none !important;
 }
 
 .qr-radar-corner-tl {
@@ -132,7 +184,7 @@
   border-bottom-right-radius: 4px;
 }
 
-/* Floating Detailed HUD Card (Hidden by default, expands on hover) */
+/* Floating Detailed HUD Card */
 .qr-radar-hud-card {
   position: absolute;
   top: calc(100% + 14px);
@@ -144,7 +196,7 @@
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   border: 1px solid rgba(255, 255, 255, 0.18);
-  box-shadow: 0 14px 44px rgba(0, 0, 0, 0.7), 0 0 24px rgba(0, 240, 255, 0.25);
+  box-shadow: 0 14px 44px rgba(0, 0, 0, 0.7), 0 0 24px var(--qr-glow);
   border-radius: 14px;
   padding: 12px 14px;
   color: #f0f6fc;
@@ -157,7 +209,7 @@
   z-index: 20;
 }
 
-/* Hover Bridge: ensures smooth mouse movement between frame and card */
+/* Hover bridge */
 .qr-radar-hud-card::before {
   content: '';
   position: absolute;
@@ -180,13 +232,28 @@
   bottom: -16px;
 }
 
-/* Show Card on hover */
-.qr-radar-box:hover .qr-radar-hud-card,
-.qr-radar-hud-card:hover {
+/* Display Modes */
+
+/* Mode 1: Hover (default) */
+.mode-hover .qr-radar-box:hover .qr-radar-hud-card,
+.mode-hover .qr-radar-hud-card:hover {
   opacity: 1 !important;
   pointer-events: auto !important;
   visibility: visible !important;
   transform: translateX(-50%) translateY(0) scale(1) !important;
+}
+
+/* Mode 2: Always Visible */
+.mode-always .qr-radar-hud-card {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  visibility: visible !important;
+  transform: translateX(-50%) translateY(0) scale(1) !important;
+}
+
+/* Mode 3: Compact (hide big card entirely) */
+.mode-compact .qr-radar-hud-card {
+  display: none !important;
 }
 
 .qr-radar-hud-header {
@@ -279,15 +346,15 @@
 }
 
 .qr-btn-primary {
-  background: linear-gradient(135deg, #00f2fe 0%, #4facfe 100%);
+  background: linear-gradient(135deg, var(--qr-color) 0%, #4facfe 100%);
   color: #031326;
-  box-shadow: 0 4px 12px rgba(0, 242, 254, 0.3);
+  box-shadow: 0 4px 12px var(--qr-glow);
 }
 
 .qr-btn-primary:hover {
   filter: brightness(1.1);
   transform: translateY(-1px);
-  box-shadow: 0 6px 16px rgba(0, 242, 254, 0.4);
+  box-shadow: 0 6px 16px var(--qr-glow);
 }
 
 .qr-btn-secondary {
@@ -310,6 +377,6 @@
 
 /* Animations */
 @keyframes qr-box-glow {
-  0% { border-color: rgba(0, 240, 255, 0.7); box-shadow: 0 0 15px rgba(0, 240, 255, 0.25); }
-  100% { border-color: rgba(56, 239, 125, 0.95); box-shadow: 0 0 25px rgba(56, 239, 125, 0.4); }
+  0% { border-color: var(--qr-color); box-shadow: 0 0 15px var(--qr-glow); }
+  100% { border-color: var(--qr-color-sec); box-shadow: 0 0 25px var(--qr-glow); }
 }
