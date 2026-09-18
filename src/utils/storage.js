@@ -12,7 +12,8 @@ const DEFAULT_SETTINGS = {
   scanRate: 15,         // FPS: 8 (Eco), 15 (Balanced), 30 (High)
   autoCopy: false,      // Auto copy content on detection
   soundEnabled: true,   // Subtle audio cue on detection
-  downsampleScale: 0.5  // Frame downsampling for performance (0.5 = half resolution)
+  downsampleScale: 0.5, // Frame downsampling for performance (0.5 = half resolution)
+  globalActive: false   // Whether scanner runs globally across all tabs
 };
 
 /**

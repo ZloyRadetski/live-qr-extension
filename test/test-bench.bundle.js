@@ -2377,6 +2377,7 @@ var init_overlay = __esm({
         this.miniBadge = null;
         this.currentLocation = null;
         this.lastDetectedText = null;
+        this.docBounds = null;
         this.missingFrames = 0;
         this.maxMissingFrames = 8;
         this.audioCtx = null;
@@ -2436,10 +2437,17 @@ var init_overlay = __esm({
         };
         this.currentLocation = lerpLocation(this.currentLocation, targetLoc, 0.45);
         const bounds = computeBounds(this.currentLocation);
+        this.boxElement.style.visibility = "visible";
         this.boxElement.style.left = `${Math.round(bounds.minX)}px`;
         this.boxElement.style.top = `${Math.round(bounds.minY)}px`;
         this.boxElement.style.width = `${Math.round(bounds.width)}px`;
         this.boxElement.style.height = `${Math.round(bounds.height)}px`;
+        this.docBounds = {
+          docX: bounds.minX + window.scrollX,
+          docY: bounds.minY + window.scrollY,
+          width: bounds.width,
+          height: bounds.height
+        };
         const spaceBelow = window.innerHeight - bounds.maxY;
         if (spaceBelow < 180) {
           this.hudCard.classList.add("qr-flipped");
@@ -2451,6 +2459,24 @@ var init_overlay = __esm({
           this.lastDetectedText = text;
           this.renderCardContent(text);
           this.onNewQRAcquired(text);
+        }
+      }
+      /**
+       * Instantly compensates bounding box position on page scroll (60/120 FPS).
+       */
+      onScroll() {
+        if (!this.docBounds || !this.boxElement || this.boxElement.classList.contains("qr-hidden")) {
+          return;
+        }
+        const currentViewportX = this.docBounds.docX - window.scrollX;
+        const currentViewportY = this.docBounds.docY - window.scrollY;
+        const isOut = currentViewportY + this.docBounds.height < -10 || currentViewportY > window.innerHeight + 10 || currentViewportX + this.docBounds.width < -10 || currentViewportX > window.innerWidth + 10;
+        if (isOut) {
+          this.boxElement.style.visibility = "hidden";
+        } else {
+          this.boxElement.style.visibility = "visible";
+          this.boxElement.style.left = `${Math.round(currentViewportX)}px`;
+          this.boxElement.style.top = `${Math.round(currentViewportY)}px`;
         }
       }
       /**

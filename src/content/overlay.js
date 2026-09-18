@@ -23,6 +23,7 @@ export class QROverlayManager {
 
     this.currentLocation = null;
     this.lastDetectedText = null;
+    this.docBounds = null; // Document-relative coordinates for smooth scrolling
     this.missingFrames = 0;
     this.maxMissingFrames = 8; // Fade out after ~8 missing frames
     this.audioCtx = null;
@@ -99,10 +100,19 @@ export class QROverlayManager {
     const bounds = computeBounds(this.currentLocation);
 
     // Apply position and dimensions
+    this.boxElement.style.visibility = 'visible';
     this.boxElement.style.left = `${Math.round(bounds.minX)}px`;
     this.boxElement.style.top = `${Math.round(bounds.minY)}px`;
     this.boxElement.style.width = `${Math.round(bounds.width)}px`;
     this.boxElement.style.height = `${Math.round(bounds.height)}px`;
+
+    // Store document-relative coordinates for 60/120fps scroll tracking
+    this.docBounds = {
+      docX: bounds.minX + window.scrollX,
+      docY: bounds.minY + window.scrollY,
+      width: bounds.width,
+      height: bounds.height
+    };
 
     // Flip card if too close to bottom of screen
     const spaceBelow = window.innerHeight - bounds.maxY;
@@ -118,6 +128,33 @@ export class QROverlayManager {
       this.lastDetectedText = text;
       this.renderCardContent(text);
       this.onNewQRAcquired(text);
+    }
+  }
+
+  /**
+   * Instantly compensates bounding box position on page scroll (60/120 FPS).
+   */
+  onScroll() {
+    if (!this.docBounds || !this.boxElement || this.boxElement.classList.contains('qr-hidden')) {
+      return;
+    }
+
+    const currentViewportX = this.docBounds.docX - window.scrollX;
+    const currentViewportY = this.docBounds.docY - window.scrollY;
+
+    const isOut = (
+      currentViewportY + this.docBounds.height < -10 ||
+      currentViewportY > window.innerHeight + 10 ||
+      currentViewportX + this.docBounds.width < -10 ||
+      currentViewportX > window.innerWidth + 10
+    );
+
+    if (isOut) {
+      this.boxElement.style.visibility = 'hidden';
+    } else {
+      this.boxElement.style.visibility = 'visible';
+      this.boxElement.style.left = `${Math.round(currentViewportX)}px`;
+      this.boxElement.style.top = `${Math.round(currentViewportY)}px`;
     }
   }
 

@@ -47,29 +47,20 @@ async function loadPreferences() {
 }
 
 /**
- * Detects current active tab and checks its scanner state from background service.
+ * Queries background service for global scanner state.
  */
 async function refreshActiveTab() {
   try {
-    if (typeof browser !== 'undefined' && browser.tabs) {
-      const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-      if (tab && tab.id) {
-        activeTabId = tab.id;
+    const response = await browser.runtime.sendMessage({
+      type: 'GET_GLOBAL_STATUS'
+    });
 
-        // Query background service status
-        const response = await browser.runtime.sendMessage({
-          type: 'GET_STATUS',
-          tabId: activeTabId
-        });
-
-        if (response && response.active !== undefined) {
-          updateUIState(response.active);
-          return;
-        }
-      }
+    if (response && response.active !== undefined) {
+      updateUIState(response.active);
+      return;
     }
   } catch (err) {
-    console.warn('[QR-Radar Popup] Error querying background service:', err);
+    console.warn('[QR-Radar Popup] Error querying global status:', err);
   }
 
   updateUIState(false);
@@ -83,39 +74,36 @@ function updateUIState(active) {
 
   if (active) {
     statusBadge.className = 'status-badge status-active';
-    statusLabel.textContent = 'Scanning';
+    statusLabel.textContent = 'Active (All Tabs)';
     toggleBtn.classList.add('scanning');
-    toggleLabel.textContent = 'Stop Scanner';
+    toggleLabel.textContent = 'Turn OFF Scanner';
   } else {
     statusBadge.className = 'status-badge status-idle';
-    statusLabel.textContent = 'Idle';
+    statusLabel.textContent = 'Off';
     toggleBtn.classList.remove('scanning');
-    toggleLabel.textContent = 'Start Real-Time Scanner';
+    toggleLabel.textContent = 'Turn ON Scanner (Everywhere)';
   }
 }
 
 /**
- * Toggles scanner on the active tab via background service.
+ * Toggles global scanner via background service.
  */
 async function handleToggleClick() {
-  if (!activeTabId) return;
-
-  const targetType = isScannerActive ? 'STOP_SCAN' : 'START_SCAN';
+  const targetType = isScannerActive ? 'STOP_GLOBAL_SCAN' : 'START_GLOBAL_SCAN';
 
   try {
     const response = await browser.runtime.sendMessage({
-      type: targetType,
-      tabId: activeTabId
+      type: targetType
     });
 
     if (response && response.active !== undefined) {
       updateUIState(response.active);
       if (response.active) {
-        window.close(); // Close popup so user sees tab HUD immediately
+        window.close(); // Close popup so user immediately sees their tab
       }
     }
   } catch (err) {
-    console.error('[QR-Radar Popup] Failed to toggle scanner:', err);
+    console.error('[QR-Radar Popup] Failed to toggle global scanner:', err);
   }
 }
 

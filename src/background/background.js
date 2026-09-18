@@ -1,17 +1,19 @@
 /**
  * Background Service Worker / Script for QR Radar.
- * Performs native tab capture via browser.tabs.captureVisibleTab (zero website prompts),
- * decodes frames with jsQR, and transmits coordinates to content scripts.
+ * Global Real-Time Scanner:
+ * - Scans seamlessly across ALL tabs without needing per-page activation.
+ * - Silent native tab capture with 60FPS scroll compensation in content script.
+ * - Optimized 720p frame decoding with jsQR for low CPU usage and true high FPS.
  */
 
 import jsQR from 'jsqr';
-import { getSettings, addScanHistory } from '../utils/storage.js';
+import { getSettings, saveSettings, addScanHistory } from '../utils/storage.js';
 import { classifyContent } from '../utils/parser.js';
 
-// Set of currently scanning tab IDs
-const activeTabs = new Set();
+let isGlobalActive = false;
+let isLoopRunning = false;
 
-// In-memory offscreen canvas and image for decoding
+// In-memory canvas and context for decoding
 let canvas = null;
 let ctx = null;
 
@@ -24,7 +26,7 @@ function getCanvas() {
 }
 
 /**
- * Decodes a base64/JPEG data URL with jsQR.
+ * Decodes a JPEG data URL with jsQR using high-speed 720p scaling.
  * @param {string} dataUrl
  * @returns {Promise<{ qr: any, scanWidth: number, scanHeight: number } | null>}
  */
@@ -38,8 +40,8 @@ async function decodeDataUrl(dataUrl) {
       let w = img.width;
       let h = img.height;
 
-      // Downsample for high-speed detection (capped at 960px width)
-      const maxW = 960;
+      // Downsample to max 720px for lightning-fast decoding
+      const maxW = 720;
       if (w > maxW) {
         const ratio = maxW / w;
         w = Math.round(w * ratio);
@@ -64,77 +66,15 @@ async function decodeDataUrl(dataUrl) {
 }
 
 /**
- * Continuous capture and detection loop for a specific tab.
+ * Ensures content script and overlay styles are injected into tab.
  * @param {number} tabId
- */
-async function captureLoop(tabId) {
-  if (!activeTabs.has(tabId)) return;
-
-  try {
-    const tab = await browser.tabs.get(tabId);
-    if (!tab || !tab.active) {
-      // If tab is in background, pause and re-check shortly
-      if (activeTabs.has(tabId)) {
-        setTimeout(() => captureLoop(tabId), 400);
-      }
-      return;
-    }
-
-    // Capture tab silently via native extension API (no site prompt!)
-    const dataUrl = await browser.tabs.captureVisibleTab(tab.windowId, {
-      format: 'jpeg',
-      quality: 70
-    });
-
-    if (dataUrl && activeTabs.has(tabId)) {
-      const decoded = await decodeDataUrl(dataUrl);
-
-      if (decoded && decoded.qr) {
-        // Classify and save to history
-        const parsed = classifyContent(decoded.qr.data);
-        addScanHistory({
-          text: decoded.qr.data,
-          type: parsed.type,
-          title: parsed.title
-        }).catch(() => {});
-
-        // Send detection to content script
-        browser.tabs.sendMessage(tabId, {
-          type: 'QR_DETECTED',
-          qrResult: decoded.qr,
-          scanWidth: decoded.scanWidth,
-          scanHeight: decoded.scanHeight
-        }).catch(() => {});
-      } else {
-        // Notify no QR code on this frame
-        browser.tabs.sendMessage(tabId, {
-          type: 'QR_NOT_FOUND'
-        }).catch(() => {});
-      }
-    }
-  } catch (err) {
-    // Tab might be navigating or closed
-    console.debug('[QR Radar] Capture tick skipped:', err?.message || err);
-  }
-
-  // Schedule next frame according to settings
-  if (activeTabs.has(tabId)) {
-    const settings = await getSettings();
-    const fps = settings.scanRate || 15;
-    const interval = Math.round(1000 / fps);
-    setTimeout(() => captureLoop(tabId), interval);
-  }
-}
-
-/**
- * Injects content script and CSS into a tab if not yet present.
  */
 async function ensureInjected(tabId) {
   try {
     const test = await browser.tabs.sendMessage(tabId, { type: 'PING' });
     if (test && test.pong) return true;
   } catch {
-    // Not injected yet, inject programmatically
+    // Content script not ready, inject
   }
 
   try {
@@ -148,100 +88,179 @@ async function ensureInjected(tabId) {
     });
     return true;
   } catch (err) {
-    console.warn('[QR Radar] Script injection failed:', err);
+    // System pages or restricted domains cannot be scripted
     return false;
   }
 }
 
 /**
- * Starts scanning for a tab.
+ * Continuous capture loop targeting the currently active tab.
  */
-async function startScanningTab(tabId) {
-  await ensureInjected(tabId);
-  activeTabs.add(tabId);
-  updateBadge(tabId, true);
+async function globalCaptureLoop() {
+  if (!isGlobalActive) {
+    isLoopRunning = false;
+    return;
+  }
 
-  browser.tabs.sendMessage(tabId, { type: 'SCANNER_STARTED' }).catch(() => {});
-  captureLoop(tabId);
+  isLoopRunning = true;
+  const loopStartTime = performance.now();
+
+  try {
+    const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+
+    if (tab && tab.id && tab.windowId && !tab.url?.startsWith('about:')) {
+      // Capture the visible area of current active tab
+      const dataUrl = await browser.tabs.captureVisibleTab(tab.windowId, {
+        format: 'jpeg',
+        quality: 65
+      });
+
+      if (dataUrl && isGlobalActive) {
+        const decoded = await decodeDataUrl(dataUrl);
+
+        if (decoded && decoded.qr) {
+          const parsed = classifyContent(decoded.qr.data);
+          addScanHistory({
+            text: decoded.qr.data,
+            type: parsed.type,
+            title: parsed.title
+          }).catch(() => {});
+
+          // Transmit coordinates to active tab
+          browser.tabs.sendMessage(tab.id, {
+            type: 'QR_DETECTED',
+            qrResult: decoded.qr,
+            scanWidth: decoded.scanWidth,
+            scanHeight: decoded.scanHeight
+          }).catch(() => {});
+        } else {
+          browser.tabs.sendMessage(tab.id, {
+            type: 'QR_NOT_FOUND'
+          }).catch(() => {});
+        }
+      }
+    }
+  } catch (err) {
+    // Tab switching or window hidden
+  }
+
+  if (isGlobalActive) {
+    const settings = await getSettings();
+    const fps = settings.scanRate || 15;
+    const targetInterval = Math.round(1000 / fps);
+    const elapsed = performance.now() - loopStartTime;
+    const nextDelay = Math.max(10, targetInterval - elapsed);
+
+    setTimeout(globalCaptureLoop, nextDelay);
+  } else {
+    isLoopRunning = false;
+  }
+}
+
+/**
+ * Starts the scanner globally across all tabs.
+ */
+async function startGlobalScan() {
+  isGlobalActive = true;
+  await saveSettings({ globalActive: true });
+  updateGlobalBadge(true);
+
+  // Notify current active tab immediately
+  const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+  if (tab && tab.id) {
+    await ensureInjected(tab.id);
+    browser.tabs.sendMessage(tab.id, { type: 'SCANNER_STARTED' }).catch(() => {});
+  }
+
+  if (!isLoopRunning) {
+    globalCaptureLoop();
+  }
   return { success: true, active: true };
 }
 
 /**
- * Stops scanning for a tab.
+ * Stops the scanner globally.
  */
-function stopScanningTab(tabId) {
-  activeTabs.delete(tabId);
-  updateBadge(tabId, false);
+async function stopGlobalScan() {
+  isGlobalActive = false;
+  await saveSettings({ globalActive: false });
+  updateGlobalBadge(false);
 
-  browser.tabs.sendMessage(tabId, { type: 'SCANNER_STOPPED' }).catch(() => {});
+  // Notify current active tab
+  const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+  if (tab && tab.id) {
+    browser.tabs.sendMessage(tab.id, { type: 'SCANNER_STOPPED' }).catch(() => {});
+  }
   return { success: true, active: false };
 }
 
 /**
- * Updates extension badge.
+ * Toggles global scanner state.
  */
-function updateBadge(tabId, isActive) {
-  if (isActive) {
-    browser.action.setBadgeText({ tabId, text: 'ON' });
-    browser.action.setBadgeBackgroundColor({ tabId, color: '#00f0ff' });
-    browser.action.setBadgeTextColor({ tabId, color: '#000000' }).catch(() => {});
+async function toggleGlobalScan() {
+  if (isGlobalActive) {
+    return await stopGlobalScan();
   } else {
-    browser.action.setBadgeText({ tabId, text: '' });
+    return await startGlobalScan();
   }
 }
 
-// Clean up when tab is closed
-browser.tabs.onRemoved.addListener((tabId) => {
-  activeTabs.delete(tabId);
+/**
+ * Updates extension toolbar badge globally.
+ */
+function updateGlobalBadge(isActive) {
+  if (isActive) {
+    browser.action.setBadgeText({ text: 'ON' });
+    browser.action.setBadgeBackgroundColor({ color: '#00f0ff' });
+    browser.action.setBadgeTextColor({ color: '#000000' }).catch(() => {});
+  } else {
+    browser.action.setBadgeText({ text: '' });
+  }
+}
+
+// When user switches tabs, ensure content script on the new tab
+browser.tabs.onActivated.addListener(async ({ tabId }) => {
+  if (isGlobalActive) {
+    await ensureInjected(tabId);
+    browser.tabs.sendMessage(tabId, { type: 'SCANNER_STARTED' }).catch(() => {});
+  }
 });
 
-// Update badge when user switches tabs
-browser.tabs.onActivated.addListener(({ tabId }) => {
-  updateBadge(tabId, activeTabs.has(tabId));
+// When tab finishes loading, inject if global scanner is ON
+browser.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+  if (isGlobalActive && changeInfo.status === 'complete' && tab.active) {
+    await ensureInjected(tabId);
+    browser.tabs.sendMessage(tabId, { type: 'SCANNER_STARTED' }).catch(() => {});
+  }
 });
 
-// Message hub
+// Message Hub
 browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || !message.type) return;
 
-  const targetTabId = message.tabId || sender.tab?.id;
-
   switch (message.type) {
-    case 'START_SCAN': {
-      if (!targetTabId) {
-        sendResponse({ success: false, error: 'No active tab' });
-        return false;
-      }
-      startScanningTab(targetTabId).then(sendResponse);
-      return true;
-    }
-
-    case 'STOP_SCAN': {
-      if (!targetTabId) {
-        sendResponse({ success: false });
-        return false;
-      }
-      sendResponse(stopScanningTab(targetTabId));
+    case 'GET_STATUS':
+    case 'GET_GLOBAL_STATUS': {
+      sendResponse({ active: isGlobalActive });
       return false;
     }
 
-    case 'TOGGLE_SCAN': {
-      if (!targetTabId) {
-        sendResponse({ success: false });
-        return false;
-      }
-      if (activeTabs.has(targetTabId)) {
-        sendResponse(stopScanningTab(targetTabId));
-      } else {
-        startScanningTab(targetTabId).then(sendResponse);
-      }
+    case 'START_SCAN':
+    case 'START_GLOBAL_SCAN': {
+      startGlobalScan().then(sendResponse);
       return true;
     }
 
-    case 'GET_STATUS': {
-      const active = targetTabId ? activeTabs.has(targetTabId) : false;
-      sendResponse({ active });
-      return false;
+    case 'STOP_SCAN':
+    case 'STOP_GLOBAL_SCAN': {
+      stopGlobalScan().then(sendResponse);
+      return true;
+    }
+
+    case 'TOGGLE_SCAN':
+    case 'TOGGLE_GLOBAL_SCAN': {
+      toggleGlobalScan().then(sendResponse);
+      return true;
     }
   }
 });
@@ -250,14 +269,14 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
 if (browser.commands && browser.commands.onCommand) {
   browser.commands.onCommand.addListener(async (command) => {
     if (command === 'toggle-scanner') {
-      const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-      if (tab && tab.id) {
-        if (activeTabs.has(tab.id)) {
-          stopScanningTab(tab.id);
-        } else {
-          await startScanningTab(tab.id);
-        }
-      }
+      await toggleGlobalScan();
     }
   });
 }
+
+// Restore saved state on startup
+getSettings().then((settings) => {
+  if (settings.globalActive) {
+    startGlobalScan();
+  }
+});

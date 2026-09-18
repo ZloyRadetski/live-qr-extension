@@ -107,6 +107,20 @@ if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.onMessa
   });
 }
 
+// 60/120 FPS Real-time scroll compensation
+window.addEventListener('scroll', () => {
+  if (overlay) {
+    overlay.onScroll();
+  }
+}, { passive: true });
+
+// Resize listener
+window.addEventListener('resize', () => {
+  if (overlay) {
+    overlay.onScroll();
+  }
+}, { passive: true });
+
 // Fallback in-page shortcut (Alt+Q)
 window.addEventListener('keydown', (e) => {
   if (e.altKey && (e.key === 'q' || e.key === 'й' || e.key === 'Q' || e.key === 'Й')) {
