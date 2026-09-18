@@ -10547,11 +10547,11 @@
     } catch (err) {
     }
     if (isGlobalActive) {
-      const userFps = Math.max(1, Math.min(30, settings.scanRate || 12));
-      const effectiveFps = hasActiveQR ? Math.min(userFps, 5) : Math.min(userFps, 2);
+      const userFps = Math.max(1, Math.min(120, Number(settings.scanRate) || 12));
+      const effectiveFps = hasActiveQR ? userFps : Math.max(1, Math.min(userFps, Math.max(4, Math.round(userFps * 0.75))));
       const targetInterval = Math.round(1e3 / effectiveFps);
       const elapsed = performance.now() - loopStartTime;
-      const nextDelay = Math.max(10, targetInterval - elapsed);
+      const nextDelay = Math.max(4, targetInterval - elapsed);
       loopTimer = setTimeout(globalCaptureLoop, nextDelay);
     } else {
       isLoopRunning = false;
@@ -10728,6 +10728,20 @@
     browser.commands.onCommand.addListener(async (command) => {
       if (command === "toggle-scanner") {
         await toggleGlobalScan();
+      }
+    });
+  }
+  if (typeof browser !== "undefined" && browser.storage && browser.storage.onChanged) {
+    browser.storage.onChanged.addListener((changes, area) => {
+      if (area === "local" && changes.qr_radar_settings && changes.qr_radar_settings.newValue) {
+        cachedSettings = changes.qr_radar_settings.newValue;
+        if (isGlobalActive) {
+          if (loopTimer) {
+            clearTimeout(loopTimer);
+            loopTimer = null;
+          }
+          globalCaptureLoop();
+        }
       }
     });
   }

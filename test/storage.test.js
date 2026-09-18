@@ -30,3 +30,27 @@ test('DEFAULT_SETTINGS contains all customizable fields', () => {
   assert.ok(DEFAULT_SETTINGS.scanRate >= 1 && DEFAULT_SETTINGS.scanRate <= 120);
   assert.ok(Array.isArray(DEFAULT_SETTINGS.blacklist));
 });
+
+test('scanRate values up to 120 FPS compute correct intervals without clamping to 5', () => {
+  const computeDelay = (rate, hasActive) => {
+    const userFps = Math.max(1, Math.min(120, Number(rate) || 12));
+    const effectiveFps = hasActive
+      ? userFps
+      : Math.max(1, Math.min(userFps, Math.max(4, Math.round(userFps * 0.75))));
+    return Math.round(1000 / effectiveFps);
+  };
+
+  assert.equal(computeDelay(1, true), 1000);
+  assert.equal(computeDelay(12, true), 83);
+  assert.equal(computeDelay(30, true), 33);
+  assert.equal(computeDelay(60, true), 17);
+  assert.equal(computeDelay(120, true), 8);
+
+  // Idle scales adaptively
+  assert.equal(computeDelay(1, false), 1000);
+  assert.equal(computeDelay(12, false), 111);
+  assert.equal(computeDelay(30, false), 43);
+  assert.equal(computeDelay(60, false), 22);
+  assert.equal(computeDelay(120, false), 11);
+});
+

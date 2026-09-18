@@ -64,9 +64,8 @@ function reportVisibleVideoRects() {
  * @returns {number} Interval in milliseconds
  */
 function getDomScanIntervalMs(scanRate) {
-  // DOM scan targets static images/canvases — they don't change 12x/sec.
-  // Cap at 3 FPS to save CPU for video capture and page rendering.
-  const fps = Math.max(1, Math.min(3, scanRate || 3));
+  // Scales in-page DOM scanning with user scanRate preference (1 to 15 FPS)
+  const fps = Math.max(1, Math.min(15, Math.round((Number(scanRate) || 12) / 2)));
   return Math.round(1000 / fps);
 }
 

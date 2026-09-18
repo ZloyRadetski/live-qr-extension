@@ -11349,7 +11349,7 @@
     }
   }
   function getDomScanIntervalMs(scanRate) {
-    const fps = Math.max(1, Math.min(3, scanRate || 3));
+    const fps = Math.max(1, Math.min(15, Math.round((Number(scanRate) || 12) / 2)));
     return Math.round(1e3 / fps);
   }
   function updateDomScanRate(scanRate) {

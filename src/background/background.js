@@ -354,15 +354,18 @@ async function globalCaptureLoop() {
   }
 
   if (isGlobalActive) {
-    // ADAPTIVE POWER MANAGEMENT:
-    // Idle (no QR on screen): 2 FPS (500ms) — just enough to detect new QR codes appearing.
-    // Active (QR tracking): 5 FPS (200ms) — smooth tracking without saturating CPU.
-    // 'settings' is already fetched at the top of this iteration.
-    const userFps = Math.max(1, Math.min(30, settings.scanRate || 12));
-    const effectiveFps = hasActiveQR ? Math.min(userFps, 5) : Math.min(userFps, 2);
+    // User-configured FPS from 1 to 120 (Slider setting):
+    const userFps = Math.max(1, Math.min(120, Number(settings.scanRate) || 12));
+
+    // When a QR code is on screen, run at full userFps for maximum tracking smoothness (up to 120 FPS).
+    // When idle (no QR code on screen), scale with userFps (at least 4 FPS, or 75% of userFps for higher settings).
+    const effectiveFps = hasActiveQR
+      ? userFps
+      : Math.max(1, Math.min(userFps, Math.max(4, Math.round(userFps * 0.75))));
+
     const targetInterval = Math.round(1000 / effectiveFps);
     const elapsed = performance.now() - loopStartTime;
-    const nextDelay = Math.max(10, targetInterval - elapsed);
+    const nextDelay = Math.max(4, targetInterval - elapsed);
 
     loopTimer = setTimeout(globalCaptureLoop, nextDelay);
   } else {
@@ -574,6 +577,22 @@ if (typeof browser !== 'undefined' && browser.commands && browser.commands.onCom
   browser.commands.onCommand.addListener(async (command) => {
     if (command === 'toggle-scanner') {
       await toggleGlobalScan();
+    }
+  });
+}
+
+// Listen for storage changes to immediately update settings (e.g. scanRate slider changes)
+if (typeof browser !== 'undefined' && browser.storage && browser.storage.onChanged) {
+  browser.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes.qr_radar_settings && changes.qr_radar_settings.newValue) {
+      cachedSettings = changes.qr_radar_settings.newValue;
+      if (isGlobalActive) {
+        if (loopTimer) {
+          clearTimeout(loopTimer);
+          loopTimer = null;
+        }
+        globalCaptureLoop();
+      }
     }
   });
 }
