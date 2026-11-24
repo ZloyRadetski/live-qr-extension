@@ -13,7 +13,9 @@
 ## Features
 
 - **Real-Time Stream Processing**: Uses hardware-accelerated tab/screen capture to inspect visual output directly, bypassing CORS issues with cross-origin images or video players (YouTube, Vimeo, WebGL games).
-- **Zero-Latency Decoding**: Powered by `jsQR` with configurable FPS throttling (8 / 15 / 30 FPS) and smart frame downscaling.
+- **Fast Off-Thread Decoding**: ZXing-C++ compiled to WebAssembly runs in a pool of Web Workers (0 ms main-thread blocking) with configurable FPS throttling (1–30 FPS).
+- **Tiny QR Codes**: a fast full-frame pass is followed, once the picture settles, by a deep pass over native-resolution and 2x-upscaled tiles. This finds codes only ~1.5 px per module wide, even on 4K / HiDPI screens that the fast pass has to downscale. Toggle: *Deep Scan Tiny QR*.
+- **Whole-Browser Coverage**: content script runs in every frame (iframes, `about:blank`), looks into shadow DOM, and the toolbar badge shows the number of codes on screen even where no overlay can be drawn (PDF viewer, restricted pages).
 - **Dynamic HUD & Bounding Box**:
   - Glowing neon cyan & emerald corner reticles tracking the QR polygon.
   - Floating HUD card with automatic classification (URLs, WiFi credentials, Email, Phone numbers, SMS, Plain text).

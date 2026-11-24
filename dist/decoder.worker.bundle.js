@@ -2019,7 +2019,13 @@
         {
           formats: ["QRCode"],
           maxNumberOfSymbols: maxQRs,
-          tryHarder: true
+          tryHarder: true,
+          tryRotate: true,
+          // rotated / mirrored screenshots, tilted codes
+          tryInvert: true,
+          // light-on-dark codes (dark mode UIs)
+          tryDownscale: true
+          // large modules on big captures
         }
       );
       if (Array.isArray(results) && results.length > 0) {

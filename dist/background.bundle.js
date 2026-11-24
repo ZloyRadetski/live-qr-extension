@@ -2005,6 +2005,8 @@
     // '720' | '1080' | '1440' capture detail (default 1080p for crisp small QR detection)
     scanDomImages: true,
     // Directly scan visible in-page <img> and <canvas>
+    deepScan: true,
+    // Extra tiled / upscaled pass that finds very small QR codes on settled screens
     blacklist: []
     // List of excluded domains (e.g. ["bank.com"])
   };
@@ -2197,6 +2199,70 @@
     return str.slice(0, max - 1) + "\u2026";
   }
 
+  // src/utils/tiling.js
+  function planTiles(width, height, tileSize = 640, overlap = 224) {
+    if (!(width > 0) || !(height > 0)) return [];
+    const step = Math.max(1, tileSize - overlap);
+    const axis = (len) => {
+      if (len <= tileSize) return [{ start: 0, size: len }];
+      const out = [];
+      for (let pos = 0; ; pos += step) {
+        if (pos + tileSize >= len) {
+          out.push({ start: Math.max(0, len - tileSize), size: Math.min(tileSize, len) });
+          break;
+        }
+        out.push({ start: pos, size: tileSize });
+      }
+      return out;
+    };
+    const xs = axis(width);
+    const ys = axis(height);
+    const tiles = [];
+    for (const yy of ys) {
+      for (const xx of xs) {
+        tiles.push({ x: xx.start, y: yy.start, w: xx.size, h: yy.size });
+      }
+    }
+    return tiles;
+  }
+  function locationCenter(loc) {
+    return {
+      x: (loc.topLeftCorner.x + loc.topRightCorner.x + loc.bottomRightCorner.x + loc.bottomLeftCorner.x) / 4,
+      y: (loc.topLeftCorner.y + loc.topRightCorner.y + loc.bottomRightCorner.y + loc.bottomLeftCorner.y) / 4
+    };
+  }
+  function locationSize(loc) {
+    const dx = loc.bottomRightCorner.x - loc.topLeftCorner.x;
+    const dy = loc.bottomRightCorner.y - loc.topLeftCorner.y;
+    return Math.hypot(dx, dy);
+  }
+  function mapLocation(loc, fn) {
+    return {
+      topLeftCorner: fn(loc.topLeftCorner),
+      topRightCorner: fn(loc.topRightCorner),
+      bottomRightCorner: fn(loc.bottomRightCorner),
+      bottomLeftCorner: fn(loc.bottomLeftCorner)
+    };
+  }
+  function mergeQrResults(...lists) {
+    const merged = [];
+    for (const list of lists) {
+      if (!Array.isArray(list)) continue;
+      for (const qr of list) {
+        if (!qr || !qr.location) continue;
+        const c2 = locationCenter(qr.location);
+        const size = Math.max(8, locationSize(qr.location));
+        const dup = merged.some((m2) => {
+          if (m2.data !== qr.data) return false;
+          const mc = locationCenter(m2.location);
+          return Math.hypot(mc.x - c2.x, mc.y - c2.y) <= Math.max(size, locationSize(m2.location)) * 0.5;
+        });
+        if (!dup) merged.push(qr);
+      }
+    }
+    return merged;
+  }
+
   // src/background/background.js
   var isGlobalActive = false;
   var isLoopRunning = false;
@@ -2208,6 +2274,11 @@
   var currentActiveTab = null;
   var lastFrameHash = 0;
   var unchangedEmptyFrames = 0;
+  var captureErrorBackoff = false;
+  var DEEP_MIN_INTERVAL_MS = 2500;
+  var lastDeepTime = -Infinity;
+  var deepDoneHash = 0;
+  var lastBadgeCount = -1;
   var reportedQrDataThisSession = /* @__PURE__ */ new Set();
   var lastQrDataSnapshot = "";
   async function getCachedSettings() {
@@ -2251,45 +2322,81 @@
     }
     return { remoteCanvas, remoteCtx };
   }
-  var decoderWorker = null;
+  var WORKER_POOL_SIZE = 2;
+  var DECODE_TIMEOUT_MS = 5e3;
+  var workerPool = [];
   var workerMsgId = 0;
-  var workerPending = /* @__PURE__ */ new Map();
-  function getDecoderWorker() {
-    if (decoderWorker) return decoderWorker;
-    if (typeof browser === "undefined" || !browser.runtime) return null;
-    try {
-      decoderWorker = new Worker(browser.runtime.getURL("dist/decoder.worker.bundle.js"));
-      const wasmUrl = browser.runtime.getURL("dist/zxing_reader.wasm");
-      decoderWorker.postMessage({ type: "INIT", wasmUrl });
-      decoderWorker.onmessage = ({ data }) => {
-        if (!data || data.type === "INIT") return;
-        const resolve = workerPending.get(data.id);
-        if (resolve) {
-          workerPending.delete(data.id);
-          resolve(data.qrs);
-        }
-      };
-      decoderWorker.onerror = (err) => {
-        console.error("[QR Radar] Decoder Worker error:", err);
-      };
-    } catch {
-      decoderWorker = null;
+  function destroyWorkerSlot(slot) {
+    const idx = workerPool.indexOf(slot);
+    if (idx !== -1) workerPool.splice(idx, 1);
+    for (const job of slot.pending.values()) {
+      clearTimeout(job.timer);
+      job.resolve([]);
     }
-    return decoderWorker;
+    slot.pending.clear();
+    try {
+      slot.worker.terminate();
+    } catch {
+    }
+  }
+  function spawnWorkerSlot() {
+    const worker = new Worker(browser.runtime.getURL("dist/decoder.worker.bundle.js"));
+    const slot = { worker, pending: /* @__PURE__ */ new Map() };
+    worker.postMessage({ type: "INIT", wasmUrl: browser.runtime.getURL("dist/zxing_reader.wasm") });
+    worker.onmessage = ({ data }) => {
+      if (!data || data.type === "INIT") return;
+      const job = slot.pending.get(data.id);
+      if (job) {
+        slot.pending.delete(data.id);
+        clearTimeout(job.timer);
+        job.resolve(data.qrs || []);
+      }
+    };
+    worker.onerror = (err) => {
+      console.error("[QR Radar] Decoder Worker error:", err);
+      destroyWorkerSlot(slot);
+    };
+    workerPool.push(slot);
+    return slot;
+  }
+  function acquireWorkerSlot() {
+    if (typeof browser === "undefined" || !browser.runtime || typeof Worker === "undefined") return null;
+    try {
+      let best = null;
+      for (const slot of workerPool) {
+        if (!best || slot.pending.size < best.pending.size) best = slot;
+      }
+      if (!best || best.pending.size > 0 && workerPool.length < WORKER_POOL_SIZE) {
+        best = spawnWorkerSlot();
+      }
+      return best;
+    } catch {
+      return null;
+    }
   }
   async function decodeWithWorker(buffer, width, height, maxQRs = 4) {
-    const worker = getDecoderWorker();
-    if (worker) {
+    const slot = acquireWorkerSlot();
+    if (slot) {
       return new Promise((resolve) => {
         const id = ++workerMsgId;
-        workerPending.set(id, resolve);
-        worker.postMessage({ id, buffer, width, height, maxQRs }, [buffer]);
+        const timer = setTimeout(() => {
+          console.warn("[QR Radar] Decoder Worker timed out, restarting it");
+          destroyWorkerSlot(slot);
+        }, DECODE_TIMEOUT_MS);
+        slot.pending.set(id, { resolve, timer });
+        try {
+          slot.worker.postMessage({ id, buffer, width, height, maxQRs }, [buffer]);
+        } catch {
+          slot.pending.delete(id);
+          clearTimeout(timer);
+          resolve([]);
+        }
       });
     }
     try {
       const results = await k2(
         { data: new Uint8ClampedArray(buffer), width, height },
-        { formats: ["QRCode"], maxNumberOfSymbols: maxQRs, tryHarder: true }
+        { formats: ["QRCode"], maxNumberOfSymbols: maxQRs, tryHarder: true, tryInvert: true, tryRotate: true }
       );
       if (Array.isArray(results) && results.length > 0) {
         return results.map((r2) => ({
@@ -2349,9 +2456,13 @@
   function computeFrameHash(dataUrl) {
     const len = dataUrl.length;
     if (len === 0) return 0;
-    const step = Math.max(1, Math.floor(len / 256));
-    let hash = 2166136261;
+    const step = Math.max(1, Math.floor(len / 512));
+    let hash = (2166136261 ^ len) >>> 0;
     for (let i2 = 0; i2 < len; i2 += step) {
+      hash ^= dataUrl.charCodeAt(i2);
+      hash = hash * 16777619 >>> 0;
+    }
+    for (let i2 = Math.max(0, len - 192); i2 < len; i2++) {
       hash ^= dataUrl.charCodeAt(i2);
       hash = hash * 16777619 >>> 0;
     }
@@ -2435,7 +2546,64 @@
     }
     return null;
   }
-  async function decodeDataUrl(dataUrl, maxW = 1920, videoInfo = null) {
+  function isFlatRegion(data, width, height, stride = 4, minRange = 56) {
+    let lo = 255;
+    let hi = 0;
+    for (let y2 = 0; y2 < height; y2 += stride) {
+      let p2 = y2 * width * 4 + 1;
+      for (let x2 = 0; x2 < width; x2 += stride, p2 += stride * 4) {
+        const v2 = data[p2];
+        if (v2 < lo) lo = v2;
+        if (v2 > hi) hi = v2;
+        if (hi - lo >= minRange) return false;
+      }
+    }
+    return true;
+  }
+  async function decodeTiles(bitmap, scanW, scanH, cfg) {
+    const { tileSize, overlap, upscale } = cfg;
+    const { cropCanvas: tCanvas, cropCtx: tCtx } = getCropCanvas();
+    if (!tCanvas || !tCtx) return [];
+    const bw = bitmap.width;
+    const bh = bitmap.height;
+    const toScanX = scanW / bw;
+    const toScanY = scanH / bh;
+    const stride = Math.max(2, Math.round(4 * upscale));
+    const found = [];
+    const inflight = /* @__PURE__ */ new Set();
+    for (const tile of planTiles(bw, bh, tileSize, overlap)) {
+      const dw = Math.round(tile.w * upscale);
+      const dh = Math.round(tile.h * upscale);
+      if (dw < 21 || dh < 21) continue;
+      if (tCanvas.width !== dw || tCanvas.height !== dh) {
+        tCanvas.width = dw;
+        tCanvas.height = dh;
+      }
+      if (upscale > 1) {
+        tCtx.imageSmoothingEnabled = true;
+        tCtx.imageSmoothingQuality = "high";
+      }
+      tCtx.drawImage(bitmap, tile.x, tile.y, tile.w, tile.h, 0, 0, dw, dh);
+      const px = tCtx.getImageData(0, 0, dw, dh);
+      if (isFlatRegion(px.data, dw, dh, stride)) continue;
+      const job = decodeWithWorker(px.data.buffer, dw, dh, 4).then((qrs) => {
+        for (const qr of qrs) {
+          found.push({
+            data: qr.data,
+            location: mapLocation(qr.location, (p2) => ({
+              x: (tile.x + p2.x / upscale) * toScanX,
+              y: (tile.y + p2.y / upscale) * toScanY
+            }))
+          });
+        }
+      }).finally(() => inflight.delete(job));
+      inflight.add(job);
+      if (inflight.size > WORKER_POOL_SIZE) await Promise.race(inflight);
+    }
+    await Promise.all(inflight);
+    return found;
+  }
+  async function decodeDataUrl(dataUrl, maxW = 1920, videoInfo = null, opts = {}) {
     const { canvas: canvas2, ctx: ctx2 } = getCanvas();
     if (!canvas2 || !ctx2) return null;
     let bitmap;
@@ -2453,9 +2621,11 @@
           return videoResult;
         }
       }
-      let w3 = bitmap.width;
+      const nativeW = bitmap.width;
+      let w3 = nativeW;
       let h2 = bitmap.height;
-      if (w3 > maxW) {
+      const wasDownscaled = w3 > maxW;
+      if (wasDownscaled) {
         const ratio = maxW / w3;
         w3 = Math.round(w3 * ratio);
         h2 = Math.round(h2 * ratio);
@@ -2466,7 +2636,15 @@
       }
       ctx2.drawImage(bitmap, 0, 0, w3, h2);
       const imgData = ctx2.getImageData(0, 0, w3, h2);
-      const qrs = await decodeWithWorker(imgData.data.buffer, w3, h2);
+      let qrs = await decodeWithWorker(imgData.data.buffer, w3, h2);
+      if (opts && opts.deep) {
+        const lists = [qrs];
+        if (wasDownscaled) {
+          lists.push(await decodeTiles(bitmap, w3, h2, { tileSize: 1280, overlap: 320, upscale: 1 }));
+        }
+        lists.push(await decodeTiles(bitmap, w3, h2, { tileSize: 640, overlap: 224, upscale: 2 }));
+        qrs = mergeQrResults(...lists);
+      }
       return { qrs, qr: qrs[0] || null, scanWidth: w3, scanHeight: h2 };
     } finally {
       bitmap.close();
@@ -2484,7 +2662,7 @@
         files: ["dist/overlay.css"]
       });
       await browser.scripting.executeScript({
-        target: { tabId },
+        target: { tabId, allFrames: true },
         files: ["dist/content.bundle.js"]
       });
       return true;
@@ -2516,13 +2694,13 @@
           }
           const resolution = settings.scanResolution || "1080";
           let maxW = 1920;
-          let quality = 78;
+          let quality = 90;
           if (resolution === "720") {
             maxW = 1280;
-            quality = 75;
+            quality = 86;
           } else if (resolution === "1440") {
             maxW = 2560;
-            quality = 85;
+            quality = 94;
           }
           const dataUrl = await browser.tabs.captureVisibleTab(tab.windowId, {
             format: "jpeg",
@@ -2530,7 +2708,9 @@
           });
           if (dataUrl && isGlobalActive && !isTabScrolling) {
             const frameHash = computeFrameHash(dataUrl);
-            if (frameHash === lastFrameHash) {
+            const deepEnabled = settings.deepScan !== false;
+            const frameChanged = frameHash !== lastFrameHash;
+            if (!frameChanged && (!deepEnabled || deepDoneHash === frameHash)) {
               if (hasActiveQR) {
                 unchangedEmptyFrames = 0;
                 const userFps = Math.max(1, Math.min(30, Number(settings.scanRate) || 2));
@@ -2542,12 +2722,19 @@
                 loopTimer = setTimeout(globalCaptureLoop, idleDelay);
                 return;
               }
-            } else {
+            }
+            if (frameChanged) {
               unchangedEmptyFrames = 0;
               lastFrameHash = frameHash;
             }
+            const nowTs = performance.now();
+            const runDeep = deepEnabled && (!frameChanged || nowTs - lastDeepTime >= DEEP_MIN_INTERVAL_MS);
             const videoInfo = tabVideoRects.get(tab.id) || null;
-            const decoded = await decodeDataUrl(dataUrl, maxW, videoInfo);
+            const decoded = await decodeDataUrl(dataUrl, maxW, videoInfo, { deep: runDeep });
+            if (runDeep) {
+              lastDeepTime = performance.now();
+              deepDoneHash = frameHash;
+            }
             if (decoded && decoded.qrs && decoded.qrs.length > 0) {
               const wasActive = hasActiveQR;
               hasActiveQR = true;
@@ -2567,31 +2754,38 @@
                   }
                 }
               }
+              updateQrBadge(decoded.qrs.length);
               browser.tabs.sendMessage(tab.id, {
                 type: "QR_DETECTED",
                 qrResults: decoded.qrs,
                 qrResult: decoded.qr,
                 scanWidth: decoded.scanWidth,
                 scanHeight: decoded.scanHeight
-              }).catch(() => {
+              }, { frameId: 0 }).catch(() => {
               });
             } else {
               hasActiveQR = false;
+              updateQrBadge(0);
               browser.tabs.sendMessage(tab.id, {
                 type: "QR_NOT_FOUND"
-              }).catch(() => {
+              }, { frameId: 0 }).catch(() => {
               });
             }
           }
         }
       } catch (err) {
+        captureErrorBackoff = true;
       }
       if (isGlobalActive) {
         const userFps = Math.max(1, Math.min(30, Number(settings.scanRate) || 2));
         const effectiveFps = hasActiveQR ? userFps : Math.max(1, Math.min(6, userFps));
         const targetInterval = Math.round(1e3 / effectiveFps);
         const elapsed = performance.now() - loopStartTime;
-        const nextDelay = Math.max(4, targetInterval - elapsed);
+        let nextDelay = Math.max(4, targetInterval - elapsed);
+        if (captureErrorBackoff) {
+          captureErrorBackoff = false;
+          nextDelay = Math.max(nextDelay, 1e3);
+        }
         loopTimer = setTimeout(globalCaptureLoop, nextDelay);
       } else {
         isLoopRunning = false;
@@ -2620,6 +2814,7 @@
     hasActiveQR = false;
     unchangedEmptyFrames = 0;
     lastFrameHash = 0;
+    deepDoneHash = 0;
     if (loopTimer) {
       clearTimeout(loopTimer);
       loopTimer = null;
@@ -2640,7 +2835,17 @@
       return await startGlobalScan();
     }
   }
+  function updateQrBadge(count) {
+    if (!isGlobalActive || count === lastBadgeCount) return;
+    lastBadgeCount = count;
+    try {
+      browser.action.setBadgeText({ text: count > 0 ? String(count) : "ON" });
+      browser.action.setBadgeBackgroundColor({ color: count > 0 ? "#00e676" : "#00f0ff" });
+    } catch {
+    }
+  }
   function updateGlobalBadge(isActive) {
+    lastBadgeCount = -1;
     if (isActive) {
       browser.action.setBadgeText({ text: "ON" });
       browser.action.setBadgeBackgroundColor({ color: "#00f0ff" });
@@ -2664,6 +2869,9 @@
       currentActiveTab = null;
       if (isGlobalActive) {
         hasActiveQR = false;
+        lastFrameHash = 0;
+        deepDoneHash = 0;
+        updateQrBadge(0);
         await ensureInjected(tabId);
         browser.tabs.sendMessage(tabId, { type: "SCANNER_STARTED" }).catch(() => {
         });
@@ -2783,7 +2991,8 @@
         }
         case "VIDEO_RECTS_UPDATE": {
           const tabId = sender?.tab?.id || currentActiveTab?.id;
-          if (tabId) {
+          const isTopFrame = !sender || sender.frameId === void 0 || sender.frameId === 0;
+          if (tabId && isTopFrame) {
             tabVideoRects.set(tabId, {
               rects: message.rects || [],
               dpr: message.dpr || 1,
@@ -2803,6 +3012,7 @@
           if (message.settings) {
             cachedSettings = message.settings;
           }
+          deepDoneHash = 0;
           if (isGlobalActive) {
             if (loopTimer) {
               clearTimeout(loopTimer);
@@ -2847,6 +3057,7 @@
     browser.storage.onChanged.addListener((changes, area) => {
       if (area === "local" && changes.qr_radar_settings && changes.qr_radar_settings.newValue) {
         cachedSettings = changes.qr_radar_settings.newValue;
+        deepDoneHash = 0;
         if (isGlobalActive) {
           if (loopTimer) {
             clearTimeout(loopTimer);

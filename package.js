@@ -132,26 +132,6 @@ async function packageRelease() {
   createZip(extFiles, extZipPath);
 
   // 2. Collect Reviewer Source Code Files
-  const reviewerNotes = `# Build Instructions for Mozilla AMO Reviewers
-
-This add-on uses \`esbuild\` to bundle modern ES modules into browser-compatible scripts.
-
-## Requirements
-- Node.js >= 18.0.0
-- npm >= 9.0.0
-
-## Steps to Reproduce the Build
-1. Extract this source archive into an empty directory.
-2. Run \`npm install\` to install the dependencies (\`esbuild\`, \`zxing-wasm\`, \`qrcode\`).
-3. Run \`npm run build\` (or \`node build.js\`).
-4. The output bundles and WebAssembly binaries will be generated in \`dist/\`:
-   - \`dist/background.bundle.js\`
-   - \`dist/content.bundle.js\`
-   - \`dist/decoder.worker.bundle.js\`
-   - \`dist/zxing_reader.wasm\`
-   - \`dist/popup.bundle.js\`
-   - \`dist/overlay.css\`
-`;
 
   const srcFiles = [
     { name: 'manifest.json', data: fs.readFileSync('manifest.json') },
@@ -159,9 +139,11 @@ This add-on uses \`esbuild\` to bundle modern ES modules into browser-compatible
     { name: 'package-lock.json', data: fs.readFileSync('package-lock.json') },
     { name: 'build.js', data: fs.readFileSync('build.js') },
     { name: 'package.js', data: fs.readFileSync('package.js') },
-    { name: 'BUILD.md', data: Buffer.from(reviewerNotes, 'utf8') },
+    { name: 'BUILD.md', data: fs.readFileSync('BUILD.md') },
     ...collectFiles('icons').map((f) => ({ name: `icons/${f.name}`, data: f.data })),
-    ...collectFiles('src').map((f) => ({ name: `src/${f.name}`, data: f.data }))
+    ...collectFiles('src').map((f) => ({ name: `src/${f.name}`, data: f.data })),
+    // build.js also bundles the test bench, so test/ must be part of the sources
+    ...collectFiles('test').map((f) => ({ name: `test/${f.name}`, data: f.data }))
   ];
 
   if (fs.existsSync('README.md')) {

@@ -27,6 +27,8 @@
     // '720' | '1080' | '1440' capture detail (default 1080p for crisp small QR detection)
     scanDomImages: true,
     // Directly scan visible in-page <img> and <canvas>
+    deepScan: true,
+    // Extra tiled / upscaled pass that finds very small QR codes on settled screens
     blacklist: []
     // List of excluded domains (e.g. ["bank.com"])
   };
@@ -263,6 +265,7 @@
   var fpsValueBadge = document.getElementById("fps-value-badge");
   var resolutionSelector = document.getElementById("resolution-selector");
   var settingDomImages = document.getElementById("setting-dom-images");
+  var settingDeepScan = document.getElementById("setting-deep-scan");
   var currentDomainText = document.getElementById("current-domain-text");
   var toggleBlacklistBtn = document.getElementById("toggle-blacklist-btn");
   var blacklistChips = document.getElementById("blacklist-chips");
@@ -367,6 +370,7 @@
       btn.classList.toggle("active", btn.dataset.res === currentRes);
     });
     settingDomImages.checked = settings.scanDomImages ?? true;
+    settingDeepScan.checked = settings.deepScan ?? true;
     renderBlacklist(settings.blacklist || []);
   }
   function renderBlacklist(blacklist = []) {
@@ -570,6 +574,7 @@
     settingAutoCopy.addEventListener("change", () => applySettingChange({ autoCopy: settingAutoCopy.checked }));
     settingPauseScroll.addEventListener("change", () => applySettingChange({ pauseOnScroll: settingPauseScroll.checked }));
     settingDomImages.addEventListener("change", () => applySettingChange({ scanDomImages: settingDomImages.checked }));
+    settingDeepScan.addEventListener("change", () => applySettingChange({ deepScan: settingDeepScan.checked }));
     resolutionSelector.addEventListener("click", (e) => {
       const btn = e.target.closest(".segment-btn");
       if (!btn) return;

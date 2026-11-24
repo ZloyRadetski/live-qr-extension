@@ -210,6 +210,8 @@
     // '720' | '1080' | '1440' capture detail (default 1080p for crisp small QR detection)
     scanDomImages: true,
     // Directly scan visible in-page <img> and <canvas>
+    deepScan: true,
+    // Extra tiled / upscaled pass that finds very small QR codes on settled screens
     blacklist: []
     // List of excluded domains (e.g. ["bank.com"])
   };
@@ -2352,6 +2354,16 @@
     return X(w2, e2, t2);
   }
 
+  // src/utils/tiling.js
+  function mapLocation(loc, fn) {
+    return {
+      topLeftCorner: fn(loc.topLeftCorner),
+      topRightCorner: fn(loc.topRightCorner),
+      bottomRightCorner: fn(loc.bottomRightCorner),
+      bottomLeftCorner: fn(loc.bottomLeftCorner)
+    };
+  }
+
   // src/utils/dom-scanner.js
   var isWasmConfigured = false;
   function ensureWasmConfigured() {
@@ -2382,13 +2394,19 @@
     }
     return { canvas: offscreenCanvas, ctx: offscreenCtx };
   }
+  var MIN_ELEMENT_PX = 8;
+  var MIN_NATURAL_PX = 16;
+  var UPSCALE_TARGET_PX = 240;
+  var MAX_HEAVY_PER_TICK = 3;
+  var SHADOW_REFRESH_MS = 2e3;
+  var heavyDecodes = 0;
   function isElementInViewport(el, margin = 50) {
     if (!el || typeof el.getBoundingClientRect !== "function") return false;
     if (el.hidden || el.style?.display === "none" || el.style?.visibility === "hidden" || el.style?.opacity === "0") {
       return false;
     }
     const rect = el.getBoundingClientRect();
-    if (rect.width <= 12 || rect.height <= 12) return false;
+    if (rect.width <= MIN_ELEMENT_PX || rect.height <= MIN_ELEMENT_PX) return false;
     const vw = typeof window !== "undefined" ? window.innerWidth : 1920;
     const vh = typeof window !== "undefined" ? window.innerHeight : 1080;
     const inBounds = rect.bottom >= -margin && rect.top <= vh + margin && rect.right >= -margin && rect.left <= vw + margin;
@@ -2408,7 +2426,30 @@
     }
     return true;
   }
-  async function scanMediaElement(el, maxDimension = 1920) {
+  function mapCachedResults(el) {
+    if (!el._qrRadarCached || el._qrRadarCached.length === 0) return [];
+    const rect = el.getBoundingClientRect();
+    const scaleX = rect.width / el._qrRadarCachedW;
+    const scaleY = rect.height / el._qrRadarCachedH;
+    const project = (p2) => ({ x: rect.left + p2.x * scaleX, y: rect.top + p2.y * scaleY });
+    return el._qrRadarCached.map((item) => ({
+      data: item.data,
+      location: mapLocation(item.loc, project),
+      rect,
+      element: el,
+      isDom: true
+    }));
+  }
+  function canvasFingerprint(p2) {
+    const pixels = p2.length >> 2;
+    const stride = Math.max(1, Math.floor(pixels / 512)) | 1;
+    let hash = 2166136261;
+    for (let px = 0; px < pixels; px += stride) {
+      hash = (hash ^ p2[px * 4 + 1]) * 16777619 >>> 0;
+    }
+    return hash;
+  }
+  async function scanMediaElement(el, maxDimension = 1920, opts = {}) {
     if (!el) return [];
     let width = 0;
     let height = 0;
@@ -2419,22 +2460,7 @@
       height = el.naturalHeight;
       const currentSrc = el.currentSrc || el.src;
       if (el._qrRadarCached !== void 0 && el._qrRadarCachedSrc === currentSrc) {
-        if (!el._qrRadarCached || el._qrRadarCached.length === 0) return [];
-        const rect = el.getBoundingClientRect();
-        const scaleX = rect.width / el._qrRadarCachedW;
-        const scaleY = rect.height / el._qrRadarCachedH;
-        return el._qrRadarCached.map((item) => ({
-          data: item.data,
-          location: {
-            topLeftCorner: { x: rect.left + item.loc.topLeftCorner.x * scaleX, y: rect.top + item.loc.topLeftCorner.y * scaleY },
-            topRightCorner: { x: rect.left + item.loc.topRightCorner.x * scaleX, y: rect.top + item.loc.topRightCorner.y * scaleY },
-            bottomRightCorner: { x: rect.left + item.loc.bottomRightCorner.x * scaleX, y: rect.top + item.loc.bottomRightCorner.y * scaleY },
-            bottomLeftCorner: { x: rect.left + item.loc.bottomLeftCorner.x * scaleX, y: rect.top + item.loc.bottomLeftCorner.y * scaleY }
-          },
-          rect,
-          element: el,
-          isDom: true
-        }));
+        return mapCachedResults(el);
       }
     } else if (el.tagName === "CANVAS") {
       if (el._qrRadarTainted) return [];
@@ -2442,22 +2468,10 @@
       height = el.height;
       if (el._qrRadarIsStatic && el._qrRadarCached !== void 0 && (el._qrRadarSkipCount || 0) < 10) {
         el._qrRadarSkipCount = (el._qrRadarSkipCount || 0) + 1;
-        if (!el._qrRadarCached || el._qrRadarCached.length === 0) return [];
-        const rect = el.getBoundingClientRect();
-        const scaleX = rect.width / el._qrRadarCachedW;
-        const scaleY = rect.height / el._qrRadarCachedH;
-        return el._qrRadarCached.map((item) => ({
-          data: item.data,
-          location: {
-            topLeftCorner: { x: rect.left + item.loc.topLeftCorner.x * scaleX, y: rect.top + item.loc.topLeftCorner.y * scaleY },
-            topRightCorner: { x: rect.left + item.loc.topRightCorner.x * scaleX, y: rect.top + item.loc.topRightCorner.y * scaleY },
-            bottomRightCorner: { x: rect.left + item.loc.bottomRightCorner.x * scaleX, y: rect.top + item.loc.bottomRightCorner.y * scaleY },
-            bottomLeftCorner: { x: rect.left + item.loc.bottomLeftCorner.x * scaleX, y: rect.top + item.loc.bottomLeftCorner.y * scaleY }
-          },
-          rect,
-          element: el,
-          isDom: true
-        }));
+        return mapCachedResults(el);
+      }
+      if (el._qrRadarCached !== void 0 && el._qrRadarNextScan && Date.now() < el._qrRadarNextScan) {
+        return mapCachedResults(el);
       }
       el._qrRadarSkipCount = 0;
     } else if (el.tagName === "VIDEO") {
@@ -2465,29 +2479,14 @@
       if (el.readyState < 2 || !el.videoWidth || !el.videoHeight) return [];
       width = el.videoWidth;
       height = el.videoHeight;
-      const currentTime = el.currentTime;
-      if (el._qrRadarVideoTime === currentTime && el._qrRadarCached !== void 0) {
-        if (!el._qrRadarCached || el._qrRadarCached.length === 0) return [];
-        const rect = el.getBoundingClientRect();
-        const scaleX = rect.width / el._qrRadarCachedW;
-        const scaleY = rect.height / el._qrRadarCachedH;
-        return el._qrRadarCached.map((item) => ({
-          data: item.data,
-          location: {
-            topLeftCorner: { x: rect.left + item.loc.topLeftCorner.x * scaleX, y: rect.top + item.loc.topLeftCorner.y * scaleY },
-            topRightCorner: { x: rect.left + item.loc.topRightCorner.x * scaleX, y: rect.top + item.loc.topRightCorner.y * scaleY },
-            bottomRightCorner: { x: rect.left + item.loc.bottomRightCorner.x * scaleX, y: rect.top + item.loc.bottomRightCorner.y * scaleY },
-            bottomLeftCorner: { x: rect.left + item.loc.bottomLeftCorner.x * scaleX, y: rect.top + item.loc.bottomLeftCorner.y * scaleY }
-          },
-          rect,
-          element: el,
-          isDom: true
-        }));
+      if (el._qrRadarVideoTime === el.currentTime && el._qrRadarCached !== void 0) {
+        return mapCachedResults(el);
       }
     } else {
       return [];
     }
-    if (width < 20 || height < 20) return [];
+    if (width < MIN_NATURAL_PX || height < MIN_NATURAL_PX) return [];
+    if (opts.cachedOnly) return el._qrRadarCached !== void 0 ? mapCachedResults(el) : [];
     const effectiveMax = el.tagName === "VIDEO" ? Math.min(maxDimension, 720) : maxDimension;
     let scanW = width;
     let scanH = height;
@@ -2496,106 +2495,70 @@
       scanW = Math.round(scanW * ratio);
       scanH = Math.round(scanH * ratio);
     }
+    let crisp = false;
+    const longest = Math.max(scanW, scanH);
+    if (longest < UPSCALE_TARGET_PX) {
+      const factor = Math.min(8, Math.ceil(UPSCALE_TARGET_PX / longest));
+      scanW *= factor;
+      scanH *= factor;
+      crisp = true;
+    }
     if (typeof document === "undefined") return [];
     const buffer = getOffscreenCanvas(scanW, scanH);
     if (!buffer || !buffer.ctx) return [];
     const { canvas, ctx } = buffer;
+    heavyDecodes++;
     try {
+      ctx.imageSmoothingEnabled = !crisp;
       ctx.drawImage(el, 0, 0, scanW, scanH);
-      let imgData = ctx.getImageData(0, 0, scanW, scanH);
+      const imgData = ctx.getImageData(0, 0, scanW, scanH);
       if (el.tagName === "CANVAS") {
-        const p2 = imgData.data;
-        const step = Math.max(1, Math.floor(p2.length / 32));
-        let hash = 2166136261;
-        for (let i2 = 0; i2 < p2.length; i2 += step) {
-          hash = (hash ^ p2[i2]) * 16777619 >>> 0;
-        }
+        const hash = canvasFingerprint(imgData.data);
         if (el._qrRadarCachedHash === hash && el._qrRadarCached !== void 0) {
           el._qrRadarStaticHits = (el._qrRadarStaticHits || 0) + 1;
           if (el._qrRadarStaticHits >= 2) {
             el._qrRadarIsStatic = true;
           }
-          if (!el._qrRadarCached || el._qrRadarCached.length === 0) return [];
-          const rect = el.getBoundingClientRect();
-          const scaleX = rect.width / el._qrRadarCachedW;
-          const scaleY = rect.height / el._qrRadarCachedH;
-          return el._qrRadarCached.map((item) => ({
-            data: item.data,
-            location: {
-              topLeftCorner: { x: rect.left + item.loc.topLeftCorner.x * scaleX, y: rect.top + item.loc.topLeftCorner.y * scaleY },
-              topRightCorner: { x: rect.left + item.loc.topRightCorner.x * scaleX, y: rect.top + item.loc.topRightCorner.y * scaleY },
-              bottomRightCorner: { x: rect.left + item.loc.bottomRightCorner.x * scaleX, y: rect.top + item.loc.bottomRightCorner.y * scaleY },
-              bottomLeftCorner: { x: rect.left + item.loc.bottomLeftCorner.x * scaleX, y: rect.top + item.loc.bottomLeftCorner.y * scaleY }
-            },
-            rect,
-            element: el,
-            isDom: true
-          }));
+          return mapCachedResults(el);
         }
         el._qrRadarCachedHash = hash;
         el._qrRadarStaticHits = 0;
         el._qrRadarIsStatic = false;
       }
-      const found = [];
+      const rawFound = [];
       try {
         ensureWasmConfigured();
         const results = await k2(
           { data: imgData.data, width: scanW, height: scanH },
-          { formats: ["QRCode"], maxNumberOfSymbols: 4, tryHarder: true }
+          { formats: ["QRCode"], maxNumberOfSymbols: 4, tryHarder: true, tryRotate: true, tryInvert: true, tryDownscale: true }
         );
-        if (Array.isArray(results) && results.length > 0) {
-          const rect = el.getBoundingClientRect();
-          const scaleX = rect.width / scanW;
-          const scaleY = rect.height / scanH;
+        if (Array.isArray(results)) {
           for (const code of results) {
             if (!code.text || !code.position) continue;
-            const location = {
-              topLeftCorner: {
-                x: rect.left + code.position.topLeft.x * scaleX,
-                y: rect.top + code.position.topLeft.y * scaleY
-              },
-              topRightCorner: {
-                x: rect.left + code.position.topRight.x * scaleX,
-                y: rect.top + code.position.topRight.y * scaleY
-              },
-              bottomRightCorner: {
-                x: rect.left + code.position.bottomRight.x * scaleX,
-                y: rect.top + code.position.bottomRight.y * scaleY
-              },
-              bottomLeftCorner: {
-                x: rect.left + code.position.bottomLeft.x * scaleX,
-                y: rect.top + code.position.bottomLeft.y * scaleY
-              }
-            };
-            found.push({
+            rawFound.push({
               data: code.text,
-              location,
-              rect,
-              element: el,
-              isDom: true
+              loc: {
+                topLeftCorner: { x: code.position.topLeft.x, y: code.position.topLeft.y },
+                topRightCorner: { x: code.position.topRight.x, y: code.position.topRight.y },
+                bottomRightCorner: { x: code.position.bottomRight.x, y: code.position.bottomRight.y },
+                bottomLeftCorner: { x: code.position.bottomLeft.x, y: code.position.bottomLeft.y }
+              }
             });
           }
         }
       } catch (err) {
         console.warn("[QR Radar] scanMediaElement decode error:", err);
       }
-      if (el.tagName === "IMG" || el.tagName === "VIDEO" || el.tagName === "CANVAS") {
-        const currentSrc = el.currentSrc || el.src;
-        el._qrRadarCachedSrc = currentSrc;
-        el._qrRadarCachedW = scanW;
-        el._qrRadarCachedH = scanH;
-        if (el.tagName === "VIDEO") el._qrRadarVideoTime = el.currentTime;
-        el._qrRadarCached = found.map((f2) => ({
-          data: f2.data,
-          loc: {
-            topLeftCorner: { x: (f2.location.topLeftCorner.x - f2.rect.left) * (scanW / f2.rect.width), y: (f2.location.topLeftCorner.y - f2.rect.top) * (scanH / f2.rect.height) },
-            topRightCorner: { x: (f2.location.topRightCorner.x - f2.rect.left) * (scanW / f2.rect.width), y: (f2.location.topRightCorner.y - f2.rect.top) * (scanH / f2.rect.height) },
-            bottomRightCorner: { x: (f2.location.bottomRightCorner.x - f2.rect.left) * (scanW / f2.rect.width), y: (f2.location.bottomRightCorner.y - f2.rect.top) * (scanH / f2.rect.height) },
-            bottomLeftCorner: { x: (f2.location.bottomLeftCorner.x - f2.rect.left) * (scanW / f2.rect.width), y: (f2.location.bottomLeftCorner.y - f2.rect.top) * (scanH / f2.rect.height) }
-          }
-        }));
+      el._qrRadarCachedSrc = el.currentSrc || el.src;
+      el._qrRadarCachedW = scanW;
+      el._qrRadarCachedH = scanH;
+      el._qrRadarCached = rawFound;
+      if (el.tagName === "VIDEO") el._qrRadarVideoTime = el.currentTime;
+      if (el.tagName === "CANVAS") {
+        el._qrRadarGap = rawFound.length > 0 ? 250 : Math.min(2e3, (el._qrRadarGap || 150) * 1.6);
+        el._qrRadarNextScan = Date.now() + el._qrRadarGap;
       }
-      return found;
+      return mapCachedResults(el);
     } catch (err) {
       if (el.tagName === "IMG" && (el.currentSrc || el.src)) {
         const src = el.currentSrc || el.src;
@@ -2656,16 +2619,52 @@
       return [];
     }
   }
+  var shadowRootsCache = [];
+  var shadowRootsCacheTime = -Infinity;
+  function getShadowRoots(force = false) {
+    if (typeof document === "undefined") return [];
+    const now = Date.now();
+    if (!force && now - shadowRootsCacheTime < SHADOW_REFRESH_MS) {
+      return shadowRootsCache.filter((r2) => r2.host && r2.host.isConnected);
+    }
+    const roots = [];
+    const stack = [document];
+    while (stack.length > 0) {
+      const scope = stack.pop();
+      for (const node of scope.querySelectorAll("*")) {
+        const sr = node.openOrClosedShadowRoot || node.shadowRoot;
+        if (sr) {
+          roots.push(sr);
+          stack.push(sr);
+        }
+      }
+    }
+    shadowRootsCache = roots;
+    shadowRootsCacheTime = now;
+    return roots;
+  }
+  function invalidateShadowRoots() {
+    shadowRootsCacheTime = -Infinity;
+  }
+  function collectMediaElements() {
+    if (typeof document === "undefined") return [];
+    const out = Array.from(document.querySelectorAll("img, canvas"));
+    for (const root of getShadowRoots()) {
+      out.push(...root.querySelectorAll("img, canvas"));
+    }
+    return out;
+  }
   async function scanVisibleDomImages() {
     if (typeof document === "undefined") return [];
-    const elements = Array.from(document.querySelectorAll("img, canvas"));
+    const elements = collectMediaElements();
     const allResults = [];
+    const startHeavy = heavyDecodes;
     for (const el of elements) {
-      if (isElementInViewport(el)) {
-        const results = await scanMediaElement(el);
-        if (Array.isArray(results) && results.length > 0) {
-          allResults.push(...results);
-        }
+      if (!isElementInViewport(el)) continue;
+      const overBudget = heavyDecodes - startHeavy >= MAX_HEAVY_PER_TICK;
+      const results = await scanMediaElement(el, 1920, { cachedOnly: overBudget });
+      if (Array.isArray(results) && results.length > 0) {
+        allResults.push(...results);
       }
     }
     return allResults;
@@ -3401,6 +3400,16 @@
   };
 
   // src/content/content.js
+  var isTopFrame = (() => {
+    try {
+      return window === window.top;
+    } catch {
+      return false;
+    }
+  })();
+  function isFrameTooSmall() {
+    return !isTopFrame && (window.innerWidth < 48 || window.innerHeight < 48);
+  }
   var overlay = null;
   var isMounted = false;
   var domScanInterval = null;
@@ -3433,6 +3442,7 @@
     }
   }
   function reportVisibleVideoRects(force = false) {
+    if (!isTopFrame) return;
     const now = Date.now();
     if (!force && now - lastVideoRectsReportTime < 500) return;
     lastVideoRectsReportTime = now;
@@ -3461,7 +3471,7 @@
     }
   }
   function getDomScanIntervalMs(scanRate) {
-    const fps = Math.max(1, Math.min(15, Math.round((Number(scanRate) || 12) / 2)));
+    const fps = Math.max(1, Math.min(4, Math.round((Number(scanRate) || 2) / 3)));
     return Math.round(1e3 / fps);
   }
   function updateDomScanRate(scanRate) {
@@ -3474,8 +3484,17 @@
       domScanInterval = setInterval(triggerDomScan, intervalMs);
     }
   }
+  var isDomScanRunning = false;
   async function triggerDomScan() {
-    if (!isMounted) return;
+    if (!isMounted || document.hidden || isDomScanRunning) return;
+    isDomScanRunning = true;
+    try {
+      await runDomScan();
+    } finally {
+      isDomScanRunning = false;
+    }
+  }
+  async function runDomScan() {
     const settings = await getCachedContentSettings();
     if (settings.scanDomImages === false) return;
     reportVisibleVideoRects();
@@ -3508,7 +3527,13 @@
       for (const m2 of mutations) {
         if (m2.type === "childList") {
           for (const node of m2.addedNodes) {
-            if (node.nodeType === 1 && (node.tagName === "IMG" || node.tagName === "VIDEO" || node.tagName === "CANVAS" || node.querySelector?.("img, video, canvas"))) {
+            if (node.nodeType !== 1) continue;
+            if (node.tagName.includes("-")) {
+              invalidateShadowRoots();
+              hasRelevantMutation = true;
+              break;
+            }
+            if (node.tagName === "IMG" || node.tagName === "VIDEO" || node.tagName === "CANVAS" || node.querySelector?.("img, video, canvas")) {
               hasRelevantMutation = true;
               break;
             }
@@ -3535,8 +3560,18 @@
       });
     }
   }
-  async function initOverlay() {
-    if (overlay && isMounted) return overlay;
+  var initInFlight = null;
+  function initOverlay() {
+    if (overlay && isMounted) return Promise.resolve(overlay);
+    if (isFrameTooSmall()) return Promise.resolve(null);
+    if (!initInFlight) {
+      initInFlight = doInitOverlay().finally(() => {
+        initInFlight = null;
+      });
+    }
+    return initInFlight;
+  }
+  async function doInitOverlay() {
     const settings = await getSettings();
     overlay = new QROverlayManager({
       soundEnabled: settings.soundEnabled,
@@ -3581,137 +3616,167 @@
     }
     isMounted = false;
   }
-  if (typeof browser !== "undefined" && browser.runtime && browser.runtime.onMessage) {
-    browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
-      if (!message || !message.type) return;
-      switch (message.type) {
-        case "PING": {
-          sendResponse({ pong: true });
-          return false;
-        }
-        case "SCANNER_STARTED": {
-          initOverlay().then(() => sendResponse({ success: true }));
-          return true;
-        }
-        case "SCANNER_STOPPED": {
-          teardownOverlay();
-          sendResponse({ success: true });
-          return false;
-        }
-        case "QR_DETECTED": {
-          const qrs = message.qrResults || (message.qrResult ? [message.qrResult] : []);
-          if (!overlay) {
-            initOverlay().then((ov) => {
-              ov.updateFromScreen(qrs, message.scanWidth, message.scanHeight);
-            });
-          } else {
-            overlay.updateFromScreen(qrs, message.scanWidth, message.scanHeight);
+  function bootstrap() {
+    if (typeof browser !== "undefined" && browser.runtime && browser.runtime.onMessage) {
+      browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
+        if (!message || !message.type) return;
+        switch (message.type) {
+          case "PING": {
+            sendResponse({ pong: true });
+            return false;
           }
-          sendResponse({ received: true });
-          return false;
-        }
-        case "QR_NOT_FOUND": {
-          if (overlay) {
-            overlay.onScreenQrNotFound();
+          case "SCANNER_STARTED": {
+            initOverlay().then(() => sendResponse({ success: true }));
+            return true;
           }
-          sendResponse({ received: true });
-          return false;
-        }
-        case "SETTINGS_UPDATED": {
-          cachedContentSettings = message.settings || null;
-          settingsCacheTime = message.settings ? Date.now() : 0;
-          if (overlay && message.settings) {
-            overlay.updateSettings(message.settings);
+          case "SCANNER_STOPPED": {
+            teardownOverlay();
+            sendResponse({ success: true });
+            return false;
           }
-          if (message.settings) {
-            if (message.settings.scanDomImages === false) {
-              if (domScanInterval) {
-                clearInterval(domScanInterval);
-                domScanInterval = null;
-              }
-              if (domObserver) {
-                domObserver.disconnect();
-                domObserver = null;
-              }
-            } else if (message.settings.scanDomImages === true || isMounted) {
-              setupDomObserver();
-              triggerDomScan();
-              updateDomScanRate(message.settings.scanRate);
+          case "QR_DETECTED": {
+            if (!isTopFrame) {
+              sendResponse({ received: false });
+              return false;
             }
+            const qrs = message.qrResults || (message.qrResult ? [message.qrResult] : []);
+            if (!overlay) {
+              initOverlay().then((ov) => {
+                if (ov) ov.updateFromScreen(qrs, message.scanWidth, message.scanHeight);
+              });
+            } else {
+              overlay.updateFromScreen(qrs, message.scanWidth, message.scanHeight);
+            }
+            sendResponse({ received: true });
+            return false;
           }
-          sendResponse({ success: true });
-          return false;
+          case "QR_NOT_FOUND": {
+            if (overlay) {
+              overlay.onScreenQrNotFound();
+            }
+            sendResponse({ received: true });
+            return false;
+          }
+          case "SETTINGS_UPDATED": {
+            cachedContentSettings = message.settings || null;
+            settingsCacheTime = message.settings ? Date.now() : 0;
+            if (overlay && message.settings) {
+              overlay.updateSettings(message.settings);
+            }
+            if (message.settings) {
+              if (message.settings.scanDomImages === false) {
+                if (domScanInterval) {
+                  clearInterval(domScanInterval);
+                  domScanInterval = null;
+                }
+                if (domObserver) {
+                  domObserver.disconnect();
+                  domObserver = null;
+                }
+              } else if (message.settings.scanDomImages === true || isMounted) {
+                setupDomObserver();
+                triggerDomScan();
+                updateDomScanRate(message.settings.scanRate);
+              }
+            }
+            sendResponse({ success: true });
+            return false;
+          }
+        }
+      });
+    }
+    let scrollNotifyTimer = null;
+    let isScrollingActive = false;
+    window.addEventListener("scroll", () => {
+      if (overlay) {
+        overlay.onScroll();
+      }
+      if (!isScrollingActive) {
+        isScrollingActive = true;
+        try {
+          browser.runtime.sendMessage({ type: "SCROLL_START" }).catch(() => {
+          });
+        } catch {
+        }
+      }
+      clearTimeout(scrollNotifyTimer);
+      scrollNotifyTimer = setTimeout(() => {
+        isScrollingActive = false;
+        try {
+          browser.runtime.sendMessage({ type: "SCROLL_END" }).catch(() => {
+          });
+        } catch {
+        }
+        reportVisibleVideoRects();
+        triggerDomScan();
+      }, 140);
+    }, { passive: true });
+    window.addEventListener("resize", () => {
+      reportVisibleVideoRects(true);
+      if (overlay) {
+        overlay.onScroll();
+      }
+    }, { passive: true });
+    const onFullscreenChange = () => {
+      reportVisibleVideoRects(true);
+    };
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    document.addEventListener("webkitfullscreenchange", onFullscreenChange);
+    function onSpaNavigation() {
+      getCachedContentSettings().then((settings) => {
+        if (settings && settings.globalActive) {
+          if (!overlay) {
+            initOverlay();
+          } else {
+            reportVisibleVideoRects();
+            triggerDomScan();
+          }
+        }
+      }).catch(() => {
+      });
+    }
+    window.addEventListener("yt-navigate-finish", onSpaNavigation);
+    window.addEventListener("popstate", onSpaNavigation);
+    window.addEventListener("hashchange", onSpaNavigation);
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) {
+        if (domScanInterval) {
+          clearInterval(domScanInterval);
+          domScanInterval = null;
+        }
+        return;
+      }
+      getCachedContentSettings().then((settings) => {
+        if (!settings || !settings.globalActive) return;
+        if (!overlay) {
+          initOverlay();
+        } else if (settings.scanDomImages !== false) {
+          updateDomScanRate(settings.scanRate);
+          reportVisibleVideoRects(true);
+          triggerDomScan();
+        }
+      }).catch(() => {
+      });
+    });
+    window.addEventListener("keydown", (e2) => {
+      if (e2.altKey && (e2.key === "q" || e2.key === "\u0439" || e2.key === "Q" || e2.key === "\u0419")) {
+        e2.preventDefault();
+        try {
+          browser.runtime.sendMessage({ type: "TOGGLE_SCAN" }).catch(() => {
+          });
+        } catch {
         }
       }
     });
-  }
-  var scrollNotifyTimer = null;
-  var isScrollingActive = false;
-  window.addEventListener("scroll", () => {
-    if (overlay) {
-      overlay.onScroll();
-    }
-    if (!isScrollingActive) {
-      isScrollingActive = true;
-      try {
-        browser.runtime.sendMessage({ type: "SCROLL_START" }).catch(() => {
-        });
-      } catch {
-      }
-    }
-    clearTimeout(scrollNotifyTimer);
-    scrollNotifyTimer = setTimeout(() => {
-      isScrollingActive = false;
-      try {
-        browser.runtime.sendMessage({ type: "SCROLL_END" }).catch(() => {
-        });
-      } catch {
-      }
-      reportVisibleVideoRects();
-      triggerDomScan();
-    }, 140);
-  }, { passive: true });
-  window.addEventListener("resize", () => {
-    reportVisibleVideoRects(true);
-    if (overlay) {
-      overlay.onScroll();
-    }
-  }, { passive: true });
-  var onFullscreenChange = () => {
-    reportVisibleVideoRects(true);
-  };
-  document.addEventListener("fullscreenchange", onFullscreenChange);
-  document.addEventListener("webkitfullscreenchange", onFullscreenChange);
-  function onSpaNavigation() {
-    getCachedContentSettings().then((settings) => {
-      if (settings && settings.globalActive) {
-        if (!overlay) {
-          initOverlay();
-        } else {
-          reportVisibleVideoRects();
-          triggerDomScan();
-        }
+    getSettings().then((settings) => {
+      if (settings && settings.globalActive && !document.hidden) {
+        initOverlay();
       }
     }).catch(() => {
     });
   }
-  window.addEventListener("yt-navigate-finish", onSpaNavigation);
-  window.addEventListener("popstate", onSpaNavigation);
-  window.addEventListener("hashchange", onSpaNavigation);
-  window.addEventListener("keydown", (e2) => {
-    if (e2.altKey && (e2.key === "q" || e2.key === "\u0439" || e2.key === "Q" || e2.key === "\u0419")) {
-      e2.preventDefault();
-      try {
-        browser.runtime.sendMessage({ type: "TOGGLE_SCAN" }).catch(() => {
-        });
-      } catch {
-      }
-    }
-  });
-  getSettings().then((settings) => {
-    if (settings && settings.globalActive) {
-      initOverlay();
-    }
-  }).catch(() => {
-  });
+  if (!globalThis.__qrRadarContentLoaded) {
+    globalThis.__qrRadarContentLoaded = true;
+    bootstrap();
+  }
 })();

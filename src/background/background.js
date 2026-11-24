@@ -10,6 +10,7 @@
 import { readBarcodes } from 'zxing-wasm/reader';
 import { getSettings, saveSettings, addScanHistory, isDomainBlacklisted } from '../utils/storage.js';
 import { classifyContent } from '../utils/parser.js';
+import { planTiles, mergeQrResults, mapLocation } from '../utils/tiling.js';
 
 let isGlobalActive = false;
 let isLoopRunning = false;
@@ -21,6 +22,13 @@ let cachedSettings = null;
 let currentActiveTab = null;
 let lastFrameHash = 0;
 let unchangedEmptyFrames = 0;
+let captureErrorBackoff = false;
+
+// Deep (tiled/upscaled) small-QR pass bookkeeping
+const DEEP_MIN_INTERVAL_MS = 2500;
+let lastDeepTime = -Infinity;
+let deepDoneHash = 0; // hash of the last frame the deep pass completed on
+let lastBadgeCount = -1;
 
 // Track QR data already saved to history to avoid repeated writes on every frame
 const reportedQrDataThisSession = new Set();
@@ -74,47 +82,77 @@ function getRemoteCanvas() {
   return { remoteCanvas, remoteCtx };
 }
 
-// ─── Decoder Web Worker ───────────────────────────────────────────────────────
-// WebAssembly decoder runs entirely in a Worker: 0 ms main-thread blocking per frame.
+// ─── Decoder Web Worker pool ──────────────────────────────────────────────────
+// WebAssembly decoders run entirely in Workers: 0 ms main-thread blocking per frame.
+// Two workers let tile passes decode in parallel. A crashed or hung worker is torn down
+// and its pending jobs are resolved with [] so the capture loop can never deadlock.
 
-let decoderWorker = null;
+const WORKER_POOL_SIZE = 2;
+const DECODE_TIMEOUT_MS = 5000;
+
+/** @type {Array<{ worker: Worker, pending: Map<number, { resolve: Function, timer: any }> }>} */
+const workerPool = [];
 let workerMsgId = 0;
-const workerPending = new Map();
 
-/**
- * Lazily initialises the decoder Worker (once per background page lifetime).
- * Safe to call in Node test environment — returns null when browser API is absent.
- * @returns {Worker | null}
- */
-function getDecoderWorker() {
-  if (decoderWorker) return decoderWorker;
-  if (typeof browser === 'undefined' || !browser.runtime) return null;
-  try {
-    decoderWorker = new Worker(browser.runtime.getURL('dist/decoder.worker.bundle.js'));
-    const wasmUrl = browser.runtime.getURL('dist/zxing_reader.wasm');
-    decoderWorker.postMessage({ type: 'INIT', wasmUrl });
-
-    decoderWorker.onmessage = ({ data }) => {
-      if (!data || data.type === 'INIT') return;
-      const resolve = workerPending.get(data.id);
-      if (resolve) {
-        workerPending.delete(data.id);
-        resolve(data.qrs);
-      }
-    };
-    decoderWorker.onerror = (err) => {
-      console.error('[QR Radar] Decoder Worker error:', err);
-    };
-  } catch {
-    decoderWorker = null;
+function destroyWorkerSlot(slot) {
+  const idx = workerPool.indexOf(slot);
+  if (idx !== -1) workerPool.splice(idx, 1);
+  for (const job of slot.pending.values()) {
+    clearTimeout(job.timer);
+    job.resolve([]);
   }
-  return decoderWorker;
+  slot.pending.clear();
+  try { slot.worker.terminate(); } catch {}
+}
+
+function spawnWorkerSlot() {
+  const worker = new Worker(browser.runtime.getURL('dist/decoder.worker.bundle.js'));
+  const slot = { worker, pending: new Map() };
+  worker.postMessage({ type: 'INIT', wasmUrl: browser.runtime.getURL('dist/zxing_reader.wasm') });
+
+  worker.onmessage = ({ data }) => {
+    if (!data || data.type === 'INIT') return;
+    const job = slot.pending.get(data.id);
+    if (job) {
+      slot.pending.delete(data.id);
+      clearTimeout(job.timer);
+      job.resolve(data.qrs || []);
+    }
+  };
+  worker.onerror = (err) => {
+    console.error('[QR Radar] Decoder Worker error:', err);
+    destroyWorkerSlot(slot);
+  };
+  workerPool.push(slot);
+  return slot;
 }
 
 /**
- * Sends a pixel buffer to the decoder Worker and returns detected QRs.
+ * Returns the least busy worker, growing the pool lazily up to WORKER_POOL_SIZE.
+ * Safe in the Node test environment — returns null when the browser API is absent.
+ * @returns {{ worker: Worker, pending: Map<number, any> } | null}
+ */
+function acquireWorkerSlot() {
+  if (typeof browser === 'undefined' || !browser.runtime || typeof Worker === 'undefined') return null;
+  try {
+    let best = null;
+    for (const slot of workerPool) {
+      if (!best || slot.pending.size < best.pending.size) best = slot;
+    }
+    if (!best || (best.pending.size > 0 && workerPool.length < WORKER_POOL_SIZE)) {
+      best = spawnWorkerSlot();
+    }
+    return best;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Sends a pixel buffer to a decoder Worker and returns detected QRs.
  * The ArrayBuffer is transferred (zero-copy) to the Worker.
- * Falls back to running zxing-wasm in background page if Worker is unavailable.
+ * Falls back to running zxing-wasm in the background page if Workers are unavailable.
+ * Always settles: a worker crash or a decode taking longer than DECODE_TIMEOUT_MS yields [].
  * @param {ArrayBuffer} buffer - RGBA pixel data
  * @param {number} width
  * @param {number} height
@@ -122,21 +160,31 @@ function getDecoderWorker() {
  * @returns {Promise<Array<{ data: string, location: any }>>}
  */
 async function decodeWithWorker(buffer, width, height, maxQRs = 4) {
-  const worker = getDecoderWorker();
-  if (worker) {
+  const slot = acquireWorkerSlot();
+  if (slot) {
     return new Promise((resolve) => {
       const id = ++workerMsgId;
-      workerPending.set(id, resolve);
-      // Transfer buffer ownership to Worker — no memory copy
-      worker.postMessage({ id, buffer, width, height, maxQRs }, [buffer]);
+      const timer = setTimeout(() => {
+        console.warn('[QR Radar] Decoder Worker timed out, restarting it');
+        destroyWorkerSlot(slot);
+      }, DECODE_TIMEOUT_MS);
+      slot.pending.set(id, { resolve, timer });
+      try {
+        // Transfer buffer ownership to Worker — no memory copy
+        slot.worker.postMessage({ id, buffer, width, height, maxQRs }, [buffer]);
+      } catch {
+        slot.pending.delete(id);
+        clearTimeout(timer);
+        resolve([]);
+      }
     });
   }
 
-  // Fallback: run zxing-wasm synchronously in background page.
+  // Fallback: run zxing-wasm in the background page.
   try {
     const results = await readBarcodes(
       { data: new Uint8ClampedArray(buffer), width, height },
-      { formats: ['QRCode'], maxNumberOfSymbols: maxQRs, tryHarder: true }
+      { formats: ['QRCode'], maxNumberOfSymbols: maxQRs, tryHarder: true, tryInvert: true, tryRotate: true }
     );
     if (Array.isArray(results) && results.length > 0) {
       return results.map((r) => ({
@@ -152,6 +200,7 @@ async function decodeWithWorker(buffer, width, height, maxQRs = 4) {
   } catch {}
   return [];
 }
+
 
 const B64_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 const B64_LOOKUP = new Uint8Array(256);
@@ -222,12 +271,19 @@ export const tabVideoRects = new Map();
 export function computeFrameHash(dataUrl) {
   const len = dataUrl.length;
   if (len === 0) return 0;
-  // Sample at most 256 evenly-spaced positions
-  const step = Math.max(1, Math.floor(len / 256));
-  let hash = 0x811c9dc5; // FNV-1a 32-bit offset basis
+  // Sample at most ~512 evenly-spaced positions...
+  const step = Math.max(1, Math.floor(len / 512));
+  // ...seeded with the total length (any content change almost always changes the JPEG size)
+  let hash = (0x811c9dc5 ^ len) >>> 0; // FNV-1a 32-bit offset basis
   for (let i = 0; i < len; i += step) {
     hash ^= dataUrl.charCodeAt(i);
     // FNV-1a prime multiply — keep within 32-bit int range
+    hash = (hash * 0x01000193) >>> 0;
+  }
+  // ...and the whole tail, so a QR appearing in the bottom strip of the screen (the last
+  // bytes of the JPEG stream) can never fall between two sampled positions.
+  for (let i = Math.max(0, len - 192); i < len; i++) {
+    hash ^= dataUrl.charCodeAt(i);
     hash = (hash * 0x01000193) >>> 0;
   }
   return hash;
@@ -350,17 +406,110 @@ export async function decodeVideoCrops(img, videoInfo, maxDim = 1920) {
 }
 
 /**
- * Decodes a screen capture data URL with jsQR.
+ * True when the RGBA region has too little contrast to contain a QR code (flat background,
+ * gradients). Samples every `stride`-th pixel in both axes — dense enough that even a ~16 px
+ * code always lands several samples on both dark and light modules.
+ * @param {Uint8ClampedArray} data
+ * @param {number} width
+ * @param {number} height
+ * @param {number} [stride=4]
+ * @param {number} [minRange=56]
+ */
+export function isFlatRegion(data, width, height, stride = 4, minRange = 56) {
+  let lo = 255;
+  let hi = 0;
+  for (let y = 0; y < height; y += stride) {
+    let p = y * width * 4 + 1; // green channel ≈ luminance
+    for (let x = 0; x < width; x += stride, p += stride * 4) {
+      const v = data[p];
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+      if (hi - lo >= minRange) return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Deep pass: re-reads the screenshot as overlapping tiles so small QR codes keep enough pixels
+ * per module. `upscale > 1` enlarges each tile with smoothing first (rescues ~1–1.5 px/module
+ * codes the plain decode misses). Flat tiles are skipped without touching the decoder.
+ * Returned locations are in the coordinate space of the first-pass canvas (`scanW` x `scanH`).
+ * @param {ImageBitmap} bitmap
+ * @param {number} scanW
+ * @param {number} scanH
+ * @param {{ tileSize: number, overlap: number, upscale: number }} cfg
+ * @returns {Promise<Array<{ data: string, location: any }>>}
+ */
+async function decodeTiles(bitmap, scanW, scanH, cfg) {
+  const { tileSize, overlap, upscale } = cfg;
+  const { cropCanvas: tCanvas, cropCtx: tCtx } = getCropCanvas();
+  if (!tCanvas || !tCtx) return [];
+
+  const bw = bitmap.width;
+  const bh = bitmap.height;
+  const toScanX = scanW / bw;
+  const toScanY = scanH / bh;
+  const stride = Math.max(2, Math.round(4 * upscale));
+  const found = [];
+  const inflight = new Set();
+
+  for (const tile of planTiles(bw, bh, tileSize, overlap)) {
+    const dw = Math.round(tile.w * upscale);
+    const dh = Math.round(tile.h * upscale);
+    if (dw < 21 || dh < 21) continue;
+
+    if (tCanvas.width !== dw || tCanvas.height !== dh) {
+      tCanvas.width = dw;
+      tCanvas.height = dh;
+    }
+    if (upscale > 1) {
+      tCtx.imageSmoothingEnabled = true;
+      tCtx.imageSmoothingQuality = 'high';
+    }
+    tCtx.drawImage(bitmap, tile.x, tile.y, tile.w, tile.h, 0, 0, dw, dh);
+    const px = tCtx.getImageData(0, 0, dw, dh);
+    if (isFlatRegion(px.data, dw, dh, stride)) continue;
+
+    const job = decodeWithWorker(px.data.buffer, dw, dh, 4)
+      .then((qrs) => {
+        for (const qr of qrs) {
+          found.push({
+            data: qr.data,
+            location: mapLocation(qr.location, (p) => ({
+              x: (tile.x + p.x / upscale) * toScanX,
+              y: (tile.y + p.y / upscale) * toScanY
+            }))
+          });
+        }
+      })
+      .finally(() => inflight.delete(job));
+    inflight.add(job);
+    // Keep at most (workers + 1) tile buffers alive at once
+    if (inflight.size > WORKER_POOL_SIZE) await Promise.race(inflight);
+  }
+  await Promise.all(inflight);
+  return found;
+}
+
+/**
+ * Decodes a screen capture data URL with zxing-wasm.
  * Converts data URL to Blob without fetch (no network stack overhead),
  * uses createImageBitmap for off-thread JPEG decode,
- * then transfers pixels to the decoder Worker for jsQR (0 ms main-thread blocking).
- * Checks visible video player crops first at full resolution, then falls back to full-screen.
+ * then transfers pixels to the decoder Worker pool (0 ms main-thread blocking).
+ *
+ * Passes (each only if enabled / needed):
+ *  1. visible video player crops at full resolution (returns immediately when it finds a code);
+ *  2. whole frame downscaled to `maxW` — fast path that finds normal-size codes;
+ *  3. `opts.deep`: native-resolution tiles (only when pass 2 downscaled the frame) and
+ *     2x-upscaled tiles — finds tiny codes that pass 2 destroys. Merged with pass 2 results.
  * @param {string} dataUrl
  * @param {number} [maxW=1920]
  * @param {any} [videoInfo=null]
+ * @param {{ deep?: boolean }} [opts]
  * @returns {Promise<{ qrs: any[], qr: any, scanWidth: number, scanHeight: number } | null>}
  */
-export async function decodeDataUrl(dataUrl, maxW = 1920, videoInfo = null) {
+export async function decodeDataUrl(dataUrl, maxW = 1920, videoInfo = null, opts = {}) {
   const { canvas, ctx } = getCanvas();
   if (!canvas || !ctx) return null;
 
@@ -383,13 +532,14 @@ export async function decodeDataUrl(dataUrl, maxW = 1920, videoInfo = null) {
       }
     }
 
-    // 2. Full-screen scan fallback (also catches QR codes outside video players)
-
-    let w = bitmap.width;
+    // 2. Full-screen scan (also catches QR codes outside video players)
+    const nativeW = bitmap.width;
+    let w = nativeW;
     let h = bitmap.height;
+    const wasDownscaled = w > maxW;
 
-    // Downsample to maxW (e.g. 540, 720, 1080) for optimal speed/accuracy balance
-    if (w > maxW) {
+    // Downsample to maxW for the speed/accuracy balance of the fast pass
+    if (wasDownscaled) {
       const ratio = maxW / w;
       w = Math.round(w * ratio);
       h = Math.round(h * ratio);
@@ -402,9 +552,19 @@ export async function decodeDataUrl(dataUrl, maxW = 1920, videoInfo = null) {
 
     ctx.drawImage(bitmap, 0, 0, w, h);
 
-    // Single GPU→CPU readback; Worker handles full jsQR loop with CPU masking
+    // Single GPU→CPU readback, decoded off-thread
     const imgData = ctx.getImageData(0, 0, w, h);
-    const qrs = await decodeWithWorker(imgData.data.buffer, w, h);
+    let qrs = await decodeWithWorker(imgData.data.buffer, w, h);
+
+    // 3. Deep pass for small codes
+    if (opts && opts.deep) {
+      const lists = [qrs];
+      if (wasDownscaled) {
+        lists.push(await decodeTiles(bitmap, w, h, { tileSize: 1280, overlap: 320, upscale: 1 }));
+      }
+      lists.push(await decodeTiles(bitmap, w, h, { tileSize: 640, overlap: 224, upscale: 2 }));
+      qrs = mergeQrResults(...lists);
+    }
 
     return { qrs, qr: qrs[0] || null, scanWidth: w, scanHeight: h };
   } finally {
@@ -412,6 +572,7 @@ export async function decodeDataUrl(dataUrl, maxW = 1920, videoInfo = null) {
     bitmap.close();
   }
 }
+
 
 /**
  * Ensures content script and overlay styles are injected into tab.
@@ -430,8 +591,10 @@ async function ensureInjected(tabId) {
       target: { tabId },
       files: ['dist/overlay.css']
     });
+    // Tabs opened before the extension was enabled have no content scripts in any frame;
+    // the content bundle guards itself against double initialisation.
     await browser.scripting.executeScript({
-      target: { tabId },
+      target: { tabId, allFrames: true },
       files: ['dist/content.bundle.js']
     });
     return true;
@@ -477,13 +640,14 @@ async function globalCaptureLoop() {
         // small QR codes (e.g. 40x40px on high-DPI or large screens) are not destroyed by downsampling.
         const resolution = settings.scanResolution || '1080';
         let maxW = 1920;
-        let quality = 78;
+        // High JPEG quality: ringing/blur from lossy compression is what kills 1–2 px/module codes.
+        let quality = 90;
         if (resolution === '720') {
           maxW = 1280;  // provides at least 1280px width so small QR codes survive downsampling
-          quality = 75;
+          quality = 86;
         } else if (resolution === '1440') {
           maxW = 2560;
-          quality = 85;
+          quality = 94;
         }
 
         const dataUrl = await browser.tabs.captureVisibleTab(tab.windowId, {
@@ -493,8 +657,11 @@ async function globalCaptureLoop() {
 
         if (dataUrl && isGlobalActive && !isTabScrolling) {
           const frameHash = computeFrameHash(dataUrl);
+          const deepEnabled = settings.deepScan !== false;
+          const frameChanged = frameHash !== lastFrameHash;
 
-          if (frameHash === lastFrameHash) {
+          // Identical frame that was already fully analysed (deep pass included): nothing new to find.
+          if (!frameChanged && (!deepEnabled || deepDoneHash === frameHash)) {
             if (hasActiveQR) {
               // QR is locked, frame is identical — safe to reuse previous result without re-decoding
               unchangedEmptyFrames = 0;
@@ -508,13 +675,25 @@ async function globalCaptureLoop() {
               loopTimer = setTimeout(globalCaptureLoop, idleDelay);
               return;
             }
-          } else {
+          }
+
+          if (frameChanged) {
             unchangedEmptyFrames = 0;
             lastFrameHash = frameHash;
           }
 
+          // Deep (tiled / upscaled) pass is ~10x the cost of the fast pass: run it as soon as the
+          // picture settles (identical frame seen twice), and at most every DEEP_MIN_INTERVAL_MS
+          // while the page keeps changing (video, animation, scrolling).
+          const nowTs = performance.now();
+          const runDeep = deepEnabled && (!frameChanged || nowTs - lastDeepTime >= DEEP_MIN_INTERVAL_MS);
+
         const videoInfo = tabVideoRects.get(tab.id) || null;
-        const decoded = await decodeDataUrl(dataUrl, maxW, videoInfo);
+        const decoded = await decodeDataUrl(dataUrl, maxW, videoInfo, { deep: runDeep });
+        if (runDeep) {
+          lastDeepTime = performance.now();
+          deepDoneHash = frameHash;
+        }
 
         if (decoded && decoded.qrs && decoded.qrs.length > 0) {
           const wasActive = hasActiveQR;
@@ -537,23 +716,30 @@ async function globalCaptureLoop() {
             }
           }
 
+          // Screen coordinates belong to the top-level viewport: only the top frame draws them.
+          // Pages without a content script (PDF viewer, restricted pages) simply reject — the
+          // toolbar badge below still tells the user a code was found, and it is in the history.
+          updateQrBadge(decoded.qrs.length);
           browser.tabs.sendMessage(tab.id, {
             type: 'QR_DETECTED',
             qrResults: decoded.qrs,
             qrResult: decoded.qr,
             scanWidth: decoded.scanWidth,
             scanHeight: decoded.scanHeight
-          }).catch(() => {});
+          }, { frameId: 0 }).catch(() => {});
         } else {
           hasActiveQR = false;
+          updateQrBadge(0);
           browser.tabs.sendMessage(tab.id, {
             type: 'QR_NOT_FOUND'
-          }).catch(() => {});
+          }, { frameId: 0 }).catch(() => {});
         }
       }
     }
   } catch (err) {
-    // Tab switching or window hidden
+    // Tab switching, window hidden, or a page the browser refuses to capture (about:addons,
+    // addons.mozilla.org, ...). Back off instead of failing at full FPS.
+    captureErrorBackoff = true;
   }
 
     if (isGlobalActive) {
@@ -568,7 +754,11 @@ async function globalCaptureLoop() {
 
       const targetInterval = Math.round(1000 / effectiveFps);
       const elapsed = performance.now() - loopStartTime;
-      const nextDelay = Math.max(4, targetInterval - elapsed);
+      let nextDelay = Math.max(4, targetInterval - elapsed);
+      if (captureErrorBackoff) {
+        captureErrorBackoff = false;
+        nextDelay = Math.max(nextDelay, 1000);
+      }
 
       loopTimer = setTimeout(globalCaptureLoop, nextDelay);
     } else {
@@ -607,6 +797,7 @@ async function stopGlobalScan() {
   hasActiveQR = false;
   unchangedEmptyFrames = 0;
   lastFrameHash = 0;
+  deepDoneHash = 0;
   if (loopTimer) {
     clearTimeout(loopTimer);
     loopTimer = null;
@@ -633,9 +824,24 @@ async function toggleGlobalScan() {
 }
 
 /**
+ * Shows the number of QR codes currently on screen in the toolbar badge ("ON" when none).
+ * Works on every page, including those where no overlay can be drawn (PDF viewer, restricted pages).
+ * @param {number} count
+ */
+function updateQrBadge(count) {
+  if (!isGlobalActive || count === lastBadgeCount) return;
+  lastBadgeCount = count;
+  try {
+    browser.action.setBadgeText({ text: count > 0 ? String(count) : 'ON' });
+    browser.action.setBadgeBackgroundColor({ color: count > 0 ? '#00e676' : '#00f0ff' });
+  } catch {}
+}
+
+/**
  * Updates extension toolbar badge globally.
  */
 function updateGlobalBadge(isActive) {
+  lastBadgeCount = -1;
   if (isActive) {
     browser.action.setBadgeText({ text: 'ON' });
     browser.action.setBadgeBackgroundColor({ color: '#00f0ff' });
@@ -662,6 +868,9 @@ if (typeof browser !== 'undefined' && browser.tabs && browser.tabs.onActivated) 
     currentActiveTab = null;
     if (isGlobalActive) {
       hasActiveQR = false;
+      lastFrameHash = 0;
+      deepDoneHash = 0;
+      updateQrBadge(0);
       await ensureInjected(tabId);
       browser.tabs.sendMessage(tabId, { type: 'SCANNER_STARTED' }).catch(() => {});
     }
@@ -804,7 +1013,10 @@ if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.onMessa
 
     case 'VIDEO_RECTS_UPDATE': {
       const tabId = sender?.tab?.id || currentActiveTab?.id;
-      if (tabId) {
+      // Rects are relative to the reporting frame's viewport; only the top frame's match the
+      // screenshot, so reports from embedded iframes must not overwrite them.
+      const isTopFrame = !sender || sender.frameId === undefined || sender.frameId === 0;
+      if (tabId && isTopFrame) {
         tabVideoRects.set(tabId, {
           rects: message.rects || [],
           dpr: message.dpr || 1,
@@ -828,6 +1040,7 @@ if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.onMessa
       if (message.settings) {
         cachedSettings = message.settings;
       }
+      deepDoneHash = 0; // settings (resolution, deep scan) changed: re-analyse the current frame
       if (isGlobalActive) {
         if (loopTimer) {
           clearTimeout(loopTimer);
@@ -880,6 +1093,7 @@ if (typeof browser !== 'undefined' && browser.storage && browser.storage.onChang
   browser.storage.onChanged.addListener((changes, area) => {
     if (area === 'local' && changes.qr_radar_settings && changes.qr_radar_settings.newValue) {
       cachedSettings = changes.qr_radar_settings.newValue;
+      deepDoneHash = 0;
       if (isGlobalActive) {
         if (loopTimer) {
           clearTimeout(loopTimer);

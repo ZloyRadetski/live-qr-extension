@@ -20,6 +20,7 @@ export const DEFAULT_SETTINGS = {
   pauseOnScroll: true,       // Pause capture during scroll to save CPU
   scanResolution: '1080',    // '720' | '1080' | '1440' capture detail (default 1080p for crisp small QR detection)
   scanDomImages: true,       // Directly scan visible in-page <img> and <canvas>
+  deepScan: true,            // Extra tiled / upscaled pass that finds very small QR codes on settled screens
   blacklist: []              // List of excluded domains (e.g. ["bank.com"])
 };
 

@@ -5,6 +5,7 @@
  */
 
 import { readBarcodes, prepareZXingModule } from 'zxing-wasm/reader';
+import { mapLocation } from './tiling.js';
 
 let isWasmConfigured = false;
 
@@ -41,6 +42,14 @@ function getOffscreenCanvas(width, height) {
   return { canvas: offscreenCanvas, ctx: offscreenCtx };
 }
 
+const MIN_ELEMENT_PX = 8;      // smallest displayed size worth inspecting
+const MIN_NATURAL_PX = 16;     // smallest natural size worth decoding (a version-1 QR is 21 modules)
+const UPSCALE_TARGET_PX = 240; // smaller sources are enlarged (crisp) up to ~this size for the decoder
+const MAX_HEAVY_PER_TICK = 3;  // decodes per scan tick; the rest is picked up on the next tick
+const SHADOW_REFRESH_MS = 2000;
+
+let heavyDecodes = 0;
+
 /**
  * Checks whether an element is roughly within the visible browser viewport and actually visible.
  * @param {HTMLElement} el
@@ -56,7 +65,7 @@ export function isElementInViewport(el, margin = 50) {
   }
 
   const rect = el.getBoundingClientRect();
-  if (rect.width <= 12 || rect.height <= 12) return false;
+  if (rect.width <= MIN_ELEMENT_PX || rect.height <= MIN_ELEMENT_PX) return false;
 
   const vw = typeof window !== 'undefined' ? window.innerWidth : 1920;
   const vh = typeof window !== 'undefined' ? window.innerHeight : 1080;
@@ -92,12 +101,47 @@ export function isElementInViewport(el, margin = 50) {
 }
 
 /**
+ * Projects cached scan-space QR locations of an element onto its current on-screen rect.
+ * @param {HTMLElement} el
+ */
+function mapCachedResults(el) {
+  if (!el._qrRadarCached || el._qrRadarCached.length === 0) return [];
+  const rect = el.getBoundingClientRect();
+  const scaleX = rect.width / el._qrRadarCachedW;
+  const scaleY = rect.height / el._qrRadarCachedH;
+  const project = (p) => ({ x: rect.left + p.x * scaleX, y: rect.top + p.y * scaleY });
+  return el._qrRadarCached.map((item) => ({
+    data: item.data,
+    location: mapLocation(item.loc, project),
+    rect,
+    element: el,
+    isDom: true
+  }));
+}
+
+/**
+ * Cheap pixel fingerprint of a canvas readback: ~512 samples on an odd pixel stride so every
+ * row/column residue is visited (a QR drawn into a previously blank canvas always changes it).
+ * @param {Uint8ClampedArray} p RGBA data
+ */
+function canvasFingerprint(p) {
+  const pixels = p.length >> 2;
+  const stride = Math.max(1, Math.floor(pixels / 512)) | 1;
+  let hash = 0x811c9dc5;
+  for (let px = 0; px < pixels; px += stride) {
+    hash = ((hash ^ p[px * 4 + 1]) * 0x01000193) >>> 0;
+  }
+  return hash;
+}
+
+/**
  * Scans an individual <img> or <canvas> element for all QR codes at its full native resolution.
  * @param {HTMLImageElement | HTMLCanvasElement} el
  * @param {number} [maxDimension=1920]
+ * @param {{ cachedOnly?: boolean }} [opts] cachedOnly: never decode, only report what is already known
  * @returns {Array<{ data: string, location: any, rect: DOMRect, element: HTMLElement }>}
  */
-export async function scanMediaElement(el, maxDimension = 1920) {
+export async function scanMediaElement(el, maxDimension = 1920, opts = {}) {
   if (!el) return [];
 
   let width = 0;
@@ -111,22 +155,7 @@ export async function scanMediaElement(el, maxDimension = 1920) {
 
     const currentSrc = el.currentSrc || el.src;
     if (el._qrRadarCached !== undefined && el._qrRadarCachedSrc === currentSrc) {
-      if (!el._qrRadarCached || el._qrRadarCached.length === 0) return [];
-      const rect = el.getBoundingClientRect();
-      const scaleX = rect.width / el._qrRadarCachedW;
-      const scaleY = rect.height / el._qrRadarCachedH;
-      return el._qrRadarCached.map((item) => ({
-        data: item.data,
-        location: {
-          topLeftCorner: { x: rect.left + item.loc.topLeftCorner.x * scaleX, y: rect.top + item.loc.topLeftCorner.y * scaleY },
-          topRightCorner: { x: rect.left + item.loc.topRightCorner.x * scaleX, y: rect.top + item.loc.topRightCorner.y * scaleY },
-          bottomRightCorner: { x: rect.left + item.loc.bottomRightCorner.x * scaleX, y: rect.top + item.loc.bottomRightCorner.y * scaleY },
-          bottomLeftCorner: { x: rect.left + item.loc.bottomLeftCorner.x * scaleX, y: rect.top + item.loc.bottomLeftCorner.y * scaleY }
-        },
-        rect,
-        element: el,
-        isDom: true
-      }));
+      return mapCachedResults(el);
     }
   } else if (el.tagName === 'CANVAS') {
     if (el._qrRadarTainted) return [];
@@ -136,22 +165,11 @@ export async function scanMediaElement(el, maxDimension = 1920) {
     // Fast path: if canvas was verified static, reuse cached result directly without GPU readback
     if (el._qrRadarIsStatic && el._qrRadarCached !== undefined && (el._qrRadarSkipCount || 0) < 10) {
       el._qrRadarSkipCount = (el._qrRadarSkipCount || 0) + 1;
-      if (!el._qrRadarCached || el._qrRadarCached.length === 0) return [];
-      const rect = el.getBoundingClientRect();
-      const scaleX = rect.width / el._qrRadarCachedW;
-      const scaleY = rect.height / el._qrRadarCachedH;
-      return el._qrRadarCached.map((item) => ({
-        data: item.data,
-        location: {
-          topLeftCorner: { x: rect.left + item.loc.topLeftCorner.x * scaleX, y: rect.top + item.loc.topLeftCorner.y * scaleY },
-          topRightCorner: { x: rect.left + item.loc.topRightCorner.x * scaleX, y: rect.top + item.loc.topRightCorner.y * scaleY },
-          bottomRightCorner: { x: rect.left + item.loc.bottomRightCorner.x * scaleX, y: rect.top + item.loc.bottomRightCorner.y * scaleY },
-          bottomLeftCorner: { x: rect.left + item.loc.bottomLeftCorner.x * scaleX, y: rect.top + item.loc.bottomLeftCorner.y * scaleY }
-        },
-        rect,
-        element: el,
-        isDom: true
-      }));
+      return mapCachedResults(el);
+    }
+    // Animated canvases (games, maps, charts) back off exponentially instead of being read back every tick
+    if (el._qrRadarCached !== undefined && el._qrRadarNextScan && Date.now() < el._qrRadarNextScan) {
+      return mapCachedResults(el);
     }
     el._qrRadarSkipCount = 0;
   } else if (el.tagName === 'VIDEO') {
@@ -162,35 +180,21 @@ export async function scanMediaElement(el, maxDimension = 1920) {
 
     // Per-frame cache: skip decode if video frame hasn't advanced since last scan
     // currentTime is a float in seconds; changes every rendered frame
-    const currentTime = el.currentTime;
-    if (el._qrRadarVideoTime === currentTime && el._qrRadarCached !== undefined) {
-      if (!el._qrRadarCached || el._qrRadarCached.length === 0) return [];
-      const rect = el.getBoundingClientRect();
-      const scaleX = rect.width / el._qrRadarCachedW;
-      const scaleY = rect.height / el._qrRadarCachedH;
-      return el._qrRadarCached.map((item) => ({
-        data: item.data,
-        location: {
-          topLeftCorner: { x: rect.left + item.loc.topLeftCorner.x * scaleX, y: rect.top + item.loc.topLeftCorner.y * scaleY },
-          topRightCorner: { x: rect.left + item.loc.topRightCorner.x * scaleX, y: rect.top + item.loc.topRightCorner.y * scaleY },
-          bottomRightCorner: { x: rect.left + item.loc.bottomRightCorner.x * scaleX, y: rect.top + item.loc.bottomRightCorner.y * scaleY },
-          bottomLeftCorner: { x: rect.left + item.loc.bottomLeftCorner.x * scaleX, y: rect.top + item.loc.bottomLeftCorner.y * scaleY }
-        },
-        rect,
-        element: el,
-        isDom: true
-      }));
+    if (el._qrRadarVideoTime === el.currentTime && el._qrRadarCached !== undefined) {
+      return mapCachedResults(el);
     }
   } else {
     return [];
   }
 
-  // Skip tiny icons that cannot possibly be QR codes (< 20px)
-  if (width < 20 || height < 20) return [];
+  // Skip tiny icons that cannot possibly be QR codes
+  if (width < MIN_NATURAL_PX || height < MIN_NATURAL_PX) return [];
+
+  // Over the per-tick decode budget: report only what is already known
+  if (opts.cachedOnly) return el._qrRadarCached !== undefined ? mapCachedResults(el) : [];
 
   // Scale down for optimal speed/accuracy balance
-  // IMG: cap at maxDimension (1200px default)
-  // VIDEO: cap at 720px — high-res not needed, decoder works well at moderate resolution
+  // IMG: cap at maxDimension; VIDEO: cap at 720px — decoder works well at moderate resolution
   const effectiveMax = el.tagName === 'VIDEO' ? Math.min(maxDimension, 720) : maxDimension;
   let scanW = width;
   let scanH = height;
@@ -200,24 +204,32 @@ export async function scanMediaElement(el, maxDimension = 1920) {
     scanH = Math.round(scanH * ratio);
   }
 
+  // Tiny sources (pixel-art QR codes, small icons): enlarge with nearest-neighbour so the
+  // decoder's binarizer gets enough pixels per module.
+  let crisp = false;
+  const longest = Math.max(scanW, scanH);
+  if (longest < UPSCALE_TARGET_PX) {
+    const factor = Math.min(8, Math.ceil(UPSCALE_TARGET_PX / longest));
+    scanW *= factor;
+    scanH *= factor;
+    crisp = true;
+  }
+
   if (typeof document === 'undefined') return [];
 
   const buffer = getOffscreenCanvas(scanW, scanH);
   if (!buffer || !buffer.ctx) return [];
   const { canvas, ctx } = buffer;
+  heavyDecodes++;
 
   try {
+    ctx.imageSmoothingEnabled = !crisp;
     ctx.drawImage(el, 0, 0, scanW, scanH);
-    let imgData = ctx.getImageData(0, 0, scanW, scanH);
+    const imgData = ctx.getImageData(0, 0, scanW, scanH);
 
-    // Fast canvas pixel fingerprint check (< 0.01 ms)
+    // Fast canvas pixel fingerprint check
     if (el.tagName === 'CANVAS') {
-      const p = imgData.data;
-      const step = Math.max(1, Math.floor(p.length / 32));
-      let hash = 0x811c9dc5;
-      for (let i = 0; i < p.length; i += step) {
-        hash = ((hash ^ p[i]) * 0x01000193) >>> 0;
-      }
+      const hash = canvasFingerprint(imgData.data);
 
       if (el._qrRadarCachedHash === hash && el._qrRadarCached !== undefined) {
         // Content has not changed at all — promote to static after 2 consecutive identical frames
@@ -225,22 +237,7 @@ export async function scanMediaElement(el, maxDimension = 1920) {
         if (el._qrRadarStaticHits >= 2) {
           el._qrRadarIsStatic = true;
         }
-        if (!el._qrRadarCached || el._qrRadarCached.length === 0) return [];
-        const rect = el.getBoundingClientRect();
-        const scaleX = rect.width / el._qrRadarCachedW;
-        const scaleY = rect.height / el._qrRadarCachedH;
-        return el._qrRadarCached.map((item) => ({
-          data: item.data,
-          location: {
-            topLeftCorner: { x: rect.left + item.loc.topLeftCorner.x * scaleX, y: rect.top + item.loc.topLeftCorner.y * scaleY },
-            topRightCorner: { x: rect.left + item.loc.topRightCorner.x * scaleX, y: rect.top + item.loc.topRightCorner.y * scaleY },
-            bottomRightCorner: { x: rect.left + item.loc.bottomRightCorner.x * scaleX, y: rect.top + item.loc.bottomRightCorner.y * scaleY },
-            bottomLeftCorner: { x: rect.left + item.loc.bottomLeftCorner.x * scaleX, y: rect.top + item.loc.bottomLeftCorner.y * scaleY }
-          },
-          rect,
-          element: el,
-          isDom: true
-        }));
+        return mapCachedResults(el);
       }
 
       el._qrRadarCachedHash = hash;
@@ -248,46 +245,26 @@ export async function scanMediaElement(el, maxDimension = 1920) {
       el._qrRadarIsStatic = false;
     }
 
-    const found = [];
+    /** @type {Array<{ data: string, loc: any }>} QR corners in scan-pixel space */
+    const rawFound = [];
     try {
       ensureWasmConfigured();
       const results = await readBarcodes(
         { data: imgData.data, width: scanW, height: scanH },
-        { formats: ['QRCode'], maxNumberOfSymbols: 4, tryHarder: true }
+        { formats: ['QRCode'], maxNumberOfSymbols: 4, tryHarder: true, tryRotate: true, tryInvert: true, tryDownscale: true }
       );
 
-      if (Array.isArray(results) && results.length > 0) {
-        const rect = el.getBoundingClientRect();
-        const scaleX = rect.width / scanW;
-        const scaleY = rect.height / scanH;
-
+      if (Array.isArray(results)) {
         for (const code of results) {
           if (!code.text || !code.position) continue;
-          const location = {
-            topLeftCorner: {
-              x: rect.left + code.position.topLeft.x * scaleX,
-              y: rect.top + code.position.topLeft.y * scaleY
-            },
-            topRightCorner: {
-              x: rect.left + code.position.topRight.x * scaleX,
-              y: rect.top + code.position.topRight.y * scaleY
-            },
-            bottomRightCorner: {
-              x: rect.left + code.position.bottomRight.x * scaleX,
-              y: rect.top + code.position.bottomRight.y * scaleY
-            },
-            bottomLeftCorner: {
-              x: rect.left + code.position.bottomLeft.x * scaleX,
-              y: rect.top + code.position.bottomLeft.y * scaleY
-            }
-          };
-
-          found.push({
+          rawFound.push({
             data: code.text,
-            location,
-            rect,
-            element: el,
-            isDom: true
+            loc: {
+              topLeftCorner: { x: code.position.topLeft.x, y: code.position.topLeft.y },
+              topRightCorner: { x: code.position.topRight.x, y: code.position.topRight.y },
+              bottomRightCorner: { x: code.position.bottomRight.x, y: code.position.bottomRight.y },
+              bottomLeftCorner: { x: code.position.bottomLeft.x, y: code.position.bottomLeft.y }
+            }
           });
         }
       }
@@ -295,25 +272,19 @@ export async function scanMediaElement(el, maxDimension = 1920) {
       console.warn('[QR Radar] scanMediaElement decode error:', err);
     }
 
-    if (el.tagName === 'IMG' || el.tagName === 'VIDEO' || el.tagName === 'CANVAS') {
-      const currentSrc = el.currentSrc || el.src;
-      el._qrRadarCachedSrc = currentSrc;
-      el._qrRadarCachedW = scanW;
-      el._qrRadarCachedH = scanH;
-      // Store video frame timestamp for per-frame cache
-      if (el.tagName === 'VIDEO') el._qrRadarVideoTime = el.currentTime;
-      el._qrRadarCached = found.map((f) => ({
-        data: f.data,
-        loc: {
-          topLeftCorner: { x: (f.location.topLeftCorner.x - f.rect.left) * (scanW / f.rect.width), y: (f.location.topLeftCorner.y - f.rect.top) * (scanH / f.rect.height) },
-          topRightCorner: { x: (f.location.topRightCorner.x - f.rect.left) * (scanW / f.rect.width), y: (f.location.topRightCorner.y - f.rect.top) * (scanH / f.rect.height) },
-          bottomRightCorner: { x: (f.location.bottomRightCorner.x - f.rect.left) * (scanW / f.rect.width), y: (f.location.bottomRightCorner.y - f.rect.top) * (scanH / f.rect.height) },
-          bottomLeftCorner: { x: (f.location.bottomLeftCorner.x - f.rect.left) * (scanW / f.rect.width), y: (f.location.bottomLeftCorner.y - f.rect.top) * (scanH / f.rect.height) }
-        }
-      }));
+    // Cache in scan space; projection to the screen happens in mapCachedResults
+    el._qrRadarCachedSrc = el.currentSrc || el.src;
+    el._qrRadarCachedW = scanW;
+    el._qrRadarCachedH = scanH;
+    el._qrRadarCached = rawFound;
+    if (el.tagName === 'VIDEO') el._qrRadarVideoTime = el.currentTime;
+    if (el.tagName === 'CANVAS') {
+      // Found a code: keep polling fast. Otherwise back off 150ms → 2s while the canvas keeps changing.
+      el._qrRadarGap = rawFound.length > 0 ? 250 : Math.min(2000, (el._qrRadarGap || 150) * 1.6);
+      el._qrRadarNextScan = Date.now() + el._qrRadarGap;
     }
 
-    return found;
+    return mapCachedResults(el);
   } catch (err) {
     // If an <img> fails due to CORS tainted canvas, request background script
     // to fetch and decode the image at native resolution with extension privileges
@@ -392,24 +363,81 @@ async function scanRemoteImageViaBackground(el, src) {
   }
 }
 
+// ─── Element discovery (including open and closed shadow DOM) ─────────────────
+
+let shadowRootsCache = [];
+let shadowRootsCacheTime = -Infinity;
+
 /**
- * Scans all visible <img>, <canvas>, and <video> tags on the page.
+ * Finds every shadow root in the document (web components hide their <img>/<canvas> from
+ * document.querySelectorAll). Walking all elements is not free, so the result is cached briefly.
+ * Firefox exposes closed roots to extensions via openOrClosedShadowRoot.
+ * @param {boolean} [force=false]
+ * @returns {ShadowRoot[]}
+ */
+export function getShadowRoots(force = false) {
+  if (typeof document === 'undefined') return [];
+  const now = Date.now();
+  if (!force && now - shadowRootsCacheTime < SHADOW_REFRESH_MS) {
+    return shadowRootsCache.filter((r) => r.host && r.host.isConnected);
+  }
+
+  const roots = [];
+  const stack = [document];
+  while (stack.length > 0) {
+    const scope = stack.pop();
+    for (const node of scope.querySelectorAll('*')) {
+      const sr = node.openOrClosedShadowRoot || node.shadowRoot;
+      if (sr) {
+        roots.push(sr);
+        stack.push(sr);
+      }
+    }
+  }
+  shadowRootsCache = roots;
+  shadowRootsCacheTime = now;
+  return roots;
+}
+
+/** Forces the next scan to re-discover shadow roots (call when the DOM structure changed). */
+export function invalidateShadowRoots() {
+  shadowRootsCacheTime = -Infinity;
+}
+
+/**
+ * All <img> and <canvas> elements of the page, light DOM and shadow DOM.
+ * @returns {HTMLElement[]}
+ */
+export function collectMediaElements() {
+  if (typeof document === 'undefined') return [];
+  const out = Array.from(document.querySelectorAll('img, canvas'));
+  for (const root of getShadowRoots()) {
+    out.push(...root.querySelectorAll('img, canvas'));
+  }
+  return out;
+}
+
+/**
+ * Scans all visible <img> and <canvas> elements on the page (shadow DOM included).
+ * At most MAX_HEAVY_PER_TICK elements are actually decoded per call so a page full of new images
+ * never freezes; the remaining ones report only cached results and are decoded on later ticks.
  * @returns {Promise<Array<{ data: string, location: any, rect: DOMRect, element: HTMLElement, isDom: boolean }>>}
  */
 export async function scanVisibleDomImages() {
   if (typeof document === 'undefined') return [];
 
-  // Scan images and canvases in DOM. Video elements are tracked via getVisibleVideoRects
-  // and decoded off-thread in background worker to avoid freezing page playback.
-  const elements = Array.from(document.querySelectorAll('img, canvas'));
+  // Video elements are tracked via getVisibleVideoRects and decoded off-thread in the
+  // background worker to avoid freezing page playback.
+  const elements = collectMediaElements();
   const allResults = [];
+  const startHeavy = heavyDecodes;
 
   for (const el of elements) {
-    if (isElementInViewport(el)) {
-      const results = await scanMediaElement(el);
-      if (Array.isArray(results) && results.length > 0) {
-        allResults.push(...results);
-      }
+    if (!isElementInViewport(el)) continue;
+    const overBudget = heavyDecodes - startHeavy >= MAX_HEAVY_PER_TICK;
+    const results = await scanMediaElement(el, 1920, { cachedOnly: overBudget });
+    if (Array.isArray(results) && results.length > 0) {
+      allResults.push(...results);
     }
   }
 

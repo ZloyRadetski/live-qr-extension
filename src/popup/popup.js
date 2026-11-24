@@ -62,6 +62,7 @@ const fpsSlider = document.getElementById('fps-slider');
 const fpsValueBadge = document.getElementById('fps-value-badge');
 const resolutionSelector = document.getElementById('resolution-selector');
 const settingDomImages = document.getElementById('setting-dom-images');
+const settingDeepScan = document.getElementById('setting-deep-scan');
 
 // DOM Elements: Site Exclusions
 const currentDomainText = document.getElementById('current-domain-text');
@@ -208,6 +209,7 @@ async function loadPreferences() {
 
   // 6. DOM Images Toggle
   settingDomImages.checked = settings.scanDomImages ?? true;
+  settingDeepScan.checked = settings.deepScan ?? true;
 
   // 7. Blacklist Chips & Current Domain Button
   renderBlacklist(settings.blacklist || []);
@@ -471,6 +473,7 @@ function setupEventListeners() {
   settingAutoCopy.addEventListener('change', () => applySettingChange({ autoCopy: settingAutoCopy.checked }));
   settingPauseScroll.addEventListener('change', () => applySettingChange({ pauseOnScroll: settingPauseScroll.checked }));
   settingDomImages.addEventListener('change', () => applySettingChange({ scanDomImages: settingDomImages.checked }));
+  settingDeepScan.addEventListener('change', () => applySettingChange({ deepScan: settingDeepScan.checked }));
 
   // Resolution selector
   resolutionSelector.addEventListener('click', (e) => {

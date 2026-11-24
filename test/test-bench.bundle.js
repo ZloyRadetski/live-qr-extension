@@ -2906,13 +2906,14 @@
   var $ = { ...B };
 
   // src/utils/dom-scanner.js
+  var MIN_ELEMENT_PX = 8;
   function isElementInViewport(el, margin = 50) {
     if (!el || typeof el.getBoundingClientRect !== "function") return false;
     if (el.hidden || el.style?.display === "none" || el.style?.visibility === "hidden" || el.style?.opacity === "0") {
       return false;
     }
     const rect = el.getBoundingClientRect();
-    if (rect.width <= 12 || rect.height <= 12) return false;
+    if (rect.width <= MIN_ELEMENT_PX || rect.height <= MIN_ELEMENT_PX) return false;
     const vw = typeof window !== "undefined" ? window.innerWidth : 1920;
     const vh = typeof window !== "undefined" ? window.innerHeight : 1080;
     const inBounds = rect.bottom >= -margin && rect.top <= vh + margin && rect.right >= -margin && rect.left <= vw + margin;

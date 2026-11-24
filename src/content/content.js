@@ -5,7 +5,18 @@
 
 import { QROverlayManager } from './overlay.js';
 import { getSettings } from '../utils/storage.js';
-import { scanVisibleDomImages, getVisibleVideoRects } from '../utils/dom-scanner.js';
+import { scanVisibleDomImages, getVisibleVideoRects, invalidateShadowRoots } from '../utils/dom-scanner.js';
+
+// The script runs in every frame (manifest all_frames). Screen-capture results are expressed in the
+// top-level viewport, so only the top frame draws them; child frames scan their own <img>/<canvas>.
+const isTopFrame = (() => {
+  try { return window === window.top; } catch { return false; }
+})();
+
+/** Ad pixels, tracking frames and hidden iframes cannot show a QR code: do not pay for them. */
+function isFrameTooSmall() {
+  return !isTopFrame && (window.innerWidth < 48 || window.innerHeight < 48);
+}
 
 let overlay = null;
 let isMounted = false;
@@ -50,6 +61,8 @@ function observeVideoElement(v) {
  * @param {boolean} [force=false] Bypasses throttle to report immediately (e.g. on fullscreen or resize).
  */
 function reportVisibleVideoRects(force = false) {
+  // Rects of videos inside iframes are relative to that iframe, not to the captured viewport.
+  if (!isTopFrame) return;
   const now = Date.now();
   if (!force && now - lastVideoRectsReportTime < 500) return;
   lastVideoRectsReportTime = now;
@@ -86,8 +99,9 @@ function reportVisibleVideoRects(force = false) {
  * @returns {number} Interval in milliseconds
  */
 function getDomScanIntervalMs(scanRate) {
-  // Scales in-page DOM scanning with user scanRate preference (1 to 15 FPS)
-  const fps = Math.max(1, Math.min(15, Math.round((Number(scanRate) || 12) / 2)));
+  // In-page <img>/<canvas> scanning is cached per element and re-triggered by DOM mutations,
+  // scroll end and navigation, so polling faster than 4 Hz only burns the page's main thread.
+  const fps = Math.max(1, Math.min(4, Math.round((Number(scanRate) || 2) / 3)));
   return Math.round(1000 / fps);
 }
 
@@ -109,8 +123,20 @@ function updateDomScanRate(scanRate) {
 /**
  * Scans visible DOM images (<img>, <canvas>) and updates overlay if QR detected.
  */
+let isDomScanRunning = false;
+
 async function triggerDomScan() {
-  if (!isMounted) return;
+  // Background tabs are invisible: never decode images there. A previous tick may still be busy.
+  if (!isMounted || document.hidden || isDomScanRunning) return;
+  isDomScanRunning = true;
+  try {
+    await runDomScan();
+  } finally {
+    isDomScanRunning = false;
+  }
+}
+
+async function runDomScan() {
   const settings = await getCachedContentSettings();
   if (settings.scanDomImages === false) return;
 
@@ -152,7 +178,14 @@ function setupDomObserver() {
     for (const m of mutations) {
       if (m.type === 'childList') {
         for (const node of m.addedNodes) {
-          if (node.nodeType === 1 && (node.tagName === 'IMG' || node.tagName === 'VIDEO' || node.tagName === 'CANVAS' || node.querySelector?.('img, video, canvas'))) {
+          if (node.nodeType !== 1) continue;
+          // Custom elements (tag name contains "-") usually host a shadow root with their own media
+          if (node.tagName.includes('-')) {
+            invalidateShadowRoots();
+            hasRelevantMutation = true;
+            break;
+          }
+          if (node.tagName === 'IMG' || node.tagName === 'VIDEO' || node.tagName === 'CANVAS' || node.querySelector?.('img, video, canvas')) {
             hasRelevantMutation = true;
             break;
           }
@@ -186,8 +219,19 @@ function setupDomObserver() {
 /**
  * Initializes or mounts overlay HUD and starts DOM media scanning.
  */
-async function initOverlay() {
-  if (overlay && isMounted) return overlay;
+let initInFlight = null;
+
+function initOverlay() {
+  if (overlay && isMounted) return Promise.resolve(overlay);
+  if (isFrameTooSmall()) return Promise.resolve(null);
+  // Concurrent triggers (message + auto-init + SPA navigation) must not create two overlays
+  if (!initInFlight) {
+    initInFlight = doInitOverlay().finally(() => { initInFlight = null; });
+  }
+  return initInFlight;
+}
+
+async function doInitOverlay() {
 
   const settings = await getSettings();
 
@@ -245,153 +289,190 @@ function teardownOverlay() {
   isMounted = false;
 }
 
-// Runtime message listener from background
-if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.onMessage) {
-  browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (!message || !message.type) return;
+/**
+ * Registers all page/runtime listeners. Runs once per frame: the content script can be injected
+ * both by the manifest and again by the background (tabs opened before install), so it guards itself.
+ */
+function bootstrap() {
+  // Runtime message listener from background
+  if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.onMessage) {
+    browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
+      if (!message || !message.type) return;
 
-    switch (message.type) {
-      case 'PING': {
-        sendResponse({ pong: true });
-        return false;
-      }
-
-      case 'SCANNER_STARTED': {
-        initOverlay().then(() => sendResponse({ success: true }));
-        return true;
-      }
-
-      case 'SCANNER_STOPPED': {
-        teardownOverlay();
-        sendResponse({ success: true });
-        return false;
-      }
-
-      case 'QR_DETECTED': {
-        const qrs = message.qrResults || (message.qrResult ? [message.qrResult] : []);
-        if (!overlay) {
-          initOverlay().then((ov) => {
-            ov.updateFromScreen(qrs, message.scanWidth, message.scanHeight);
-          });
-        } else {
-          overlay.updateFromScreen(qrs, message.scanWidth, message.scanHeight);
+      switch (message.type) {
+        case 'PING': {
+          sendResponse({ pong: true });
+          return false;
         }
-        sendResponse({ received: true });
-        return false;
-      }
 
-      case 'QR_NOT_FOUND': {
-        if (overlay) {
-          overlay.onScreenQrNotFound();
+        case 'SCANNER_STARTED': {
+          initOverlay().then(() => sendResponse({ success: true }));
+          return true;
         }
-        sendResponse({ received: true });
-        return false;
-      }
 
-      case 'SETTINGS_UPDATED': {
-        // Invalidate local settings cache immediately
-        cachedContentSettings = message.settings || null;
-        settingsCacheTime = message.settings ? Date.now() : 0;
-
-        if (overlay && message.settings) {
-          overlay.updateSettings(message.settings);
+        case 'SCANNER_STOPPED': {
+          teardownOverlay();
+          sendResponse({ success: true });
+          return false;
         }
-        if (message.settings) {
-          if (message.settings.scanDomImages === false) {
-            if (domScanInterval) {
-              clearInterval(domScanInterval);
-              domScanInterval = null;
-            }
-            if (domObserver) {
-              domObserver.disconnect();
-              domObserver = null;
-            }
-          } else if (message.settings.scanDomImages === true || isMounted) {
-            setupDomObserver();
-            triggerDomScan();
-            updateDomScanRate(message.settings.scanRate);
+
+        case 'QR_DETECTED': {
+          if (!isTopFrame) {
+            sendResponse({ received: false });
+            return false;
           }
+          const qrs = message.qrResults || (message.qrResult ? [message.qrResult] : []);
+          if (!overlay) {
+            initOverlay().then((ov) => {
+              if (ov) ov.updateFromScreen(qrs, message.scanWidth, message.scanHeight);
+            });
+          } else {
+            overlay.updateFromScreen(qrs, message.scanWidth, message.scanHeight);
+          }
+          sendResponse({ received: true });
+          return false;
         }
-        sendResponse({ success: true });
-        return false;
+
+        case 'QR_NOT_FOUND': {
+          if (overlay) {
+            overlay.onScreenQrNotFound();
+          }
+          sendResponse({ received: true });
+          return false;
+        }
+
+        case 'SETTINGS_UPDATED': {
+          // Invalidate local settings cache immediately
+          cachedContentSettings = message.settings || null;
+          settingsCacheTime = message.settings ? Date.now() : 0;
+
+          if (overlay && message.settings) {
+            overlay.updateSettings(message.settings);
+          }
+          if (message.settings) {
+            if (message.settings.scanDomImages === false) {
+              if (domScanInterval) {
+                clearInterval(domScanInterval);
+                domScanInterval = null;
+              }
+              if (domObserver) {
+                domObserver.disconnect();
+                domObserver = null;
+              }
+            } else if (message.settings.scanDomImages === true || isMounted) {
+              setupDomObserver();
+              triggerDomScan();
+              updateDomScanRate(message.settings.scanRate);
+            }
+          }
+          sendResponse({ success: true });
+          return false;
+        }
       }
+    });
+  }
+
+  // 60/120 FPS Real-time scroll compensation with background pause
+  let scrollNotifyTimer = null;
+  let isScrollingActive = false;
+
+  window.addEventListener('scroll', () => {
+    if (overlay) {
+      overlay.onScroll();
     }
-  });
-}
 
-// 60/120 FPS Real-time scroll compensation with background pause
-let scrollNotifyTimer = null;
-let isScrollingActive = false;
+    // Notify background service to pause heavy captures during scroll
+    if (!isScrollingActive) {
+      isScrollingActive = true;
+      try {
+        browser.runtime.sendMessage({ type: 'SCROLL_START' }).catch(() => {});
+      } catch {}
+    }
 
-window.addEventListener('scroll', () => {
-  if (overlay) {
-    overlay.onScroll();
+    clearTimeout(scrollNotifyTimer);
+    scrollNotifyTimer = setTimeout(() => {
+      isScrollingActive = false;
+      try {
+        browser.runtime.sendMessage({ type: 'SCROLL_END' }).catch(() => {});
+      } catch {}
+      reportVisibleVideoRects();
+      triggerDomScan();
+    }, 140);
+  }, { passive: true });
+
+  // Resize and fullscreen listeners: instantly update video rects
+  window.addEventListener('resize', () => {
+    reportVisibleVideoRects(true);
+    if (overlay) {
+      overlay.onScroll();
+    }
+  }, { passive: true });
+
+  const onFullscreenChange = () => {
+    reportVisibleVideoRects(true);
+  };
+  document.addEventListener('fullscreenchange', onFullscreenChange);
+  document.addEventListener('webkitfullscreenchange', onFullscreenChange);
+
+  // SPA Navigation support (YouTube yt-navigate-finish, popstate, hashchange)
+  function onSpaNavigation() {
+    getCachedContentSettings().then((settings) => {
+      if (settings && settings.globalActive) {
+        if (!overlay) {
+          initOverlay();
+        } else {
+          reportVisibleVideoRects();
+          triggerDomScan();
+        }
+      }
+    }).catch(() => {});
   }
 
-  // Notify background service to pause heavy captures during scroll
-  if (!isScrollingActive) {
-    isScrollingActive = true;
-    try {
-      browser.runtime.sendMessage({ type: 'SCROLL_START' }).catch(() => {});
-    } catch {}
-  }
+  window.addEventListener('yt-navigate-finish', onSpaNavigation);
+  window.addEventListener('popstate', onSpaNavigation);
+  window.addEventListener('hashchange', onSpaNavigation);
 
-  clearTimeout(scrollNotifyTimer);
-  scrollNotifyTimer = setTimeout(() => {
-    isScrollingActive = false;
-    try {
-      browser.runtime.sendMessage({ type: 'SCROLL_END' }).catch(() => {});
-    } catch {}
-    reportVisibleVideoRects();
-    triggerDomScan();
-  }, 140);
-}, { passive: true });
-
-// Resize and fullscreen listeners: instantly update video rects
-window.addEventListener('resize', () => {
-  reportVisibleVideoRects(true);
-  if (overlay) {
-    overlay.onScroll();
-  }
-}, { passive: true });
-
-const onFullscreenChange = () => {
-  reportVisibleVideoRects(true);
-};
-document.addEventListener('fullscreenchange', onFullscreenChange);
-document.addEventListener('webkitfullscreenchange', onFullscreenChange);
-
-// SPA Navigation support (YouTube yt-navigate-finish, popstate, hashchange)
-function onSpaNavigation() {
-  getCachedContentSettings().then((settings) => {
-    if (settings && settings.globalActive) {
+  // Hidden tabs/frames must not scan; re-arm everything as soon as the tab becomes visible again.
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      if (domScanInterval) {
+        clearInterval(domScanInterval);
+        domScanInterval = null;
+      }
+      return;
+    }
+    getCachedContentSettings().then((settings) => {
+      if (!settings || !settings.globalActive) return;
       if (!overlay) {
         initOverlay();
-      } else {
-        reportVisibleVideoRects();
+      } else if (settings.scanDomImages !== false) {
+        updateDomScanRate(settings.scanRate);
+        reportVisibleVideoRects(true);
         triggerDomScan();
       }
+    }).catch(() => {});
+  });
+
+  // Fallback in-page shortcut (Alt+Q)
+  window.addEventListener('keydown', (e) => {
+    if (e.altKey && (e.key === 'q' || e.key === 'й' || e.key === 'Q' || e.key === 'Й')) {
+      e.preventDefault();
+      try {
+        browser.runtime.sendMessage({ type: 'TOGGLE_SCAN' }).catch(() => {});
+      } catch {}
+    }
+  });
+
+  // Auto-initialize on page load if scanner is already globally active
+  // (hidden tabs wait for their visibilitychange instead of all initialising at browser start)
+  getSettings().then((settings) => {
+    if (settings && settings.globalActive && !document.hidden) {
+      initOverlay();
     }
   }).catch(() => {});
 }
 
-window.addEventListener('yt-navigate-finish', onSpaNavigation);
-window.addEventListener('popstate', onSpaNavigation);
-window.addEventListener('hashchange', onSpaNavigation);
-
-// Fallback in-page shortcut (Alt+Q)
-window.addEventListener('keydown', (e) => {
-  if (e.altKey && (e.key === 'q' || e.key === 'й' || e.key === 'Q' || e.key === 'Й')) {
-    e.preventDefault();
-    try {
-      browser.runtime.sendMessage({ type: 'TOGGLE_SCAN' }).catch(() => {});
-    } catch {}
-  }
-});
-
-// Auto-initialize on page load if scanner is already globally active
-getSettings().then((settings) => {
-  if (settings && settings.globalActive) {
-    initOverlay();
-  }
-}).catch(() => {});
+if (!globalThis.__qrRadarContentLoaded) {
+  globalThis.__qrRadarContentLoaded = true;
+  bootstrap();
+}
